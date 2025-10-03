@@ -1,0 +1,68 @@
+@page "/pdfs"
+@using System.Net.Http.Json
+@inject HttpClient Http
+
+<h2 class="mb-3">📄 PDF Browser (Local Server)</h2>
+
+<div class="row">
+    <div class="col-4">
+        <input class="form-control mb-2" placeholder="ค้นหาไฟล์..." @bind="search" @bind:event="oninput" />
+        <ul class="list-group" style="max-height: 70vh; overflow:auto;">
+            @if (files is null)
+            {
+                <li class="list-group-item">กำลังโหลด...</li>
+            }
+            else if (!Filtered.Any())
+            {
+                <li class="list-group-item">ไม่พบไฟล์</li>
+            }
+            else
+            {
+                @foreach (var f in Filtered)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <button class="btn btn-link p-0" @onclick="() => Select(f.name)">@f.name</button>
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="@($"/api/pdfs/{Uri.EscapeDataString(f.name)}")" target="_blank">ดาวน์โหลด</a>
+                    </li>
+                }
+            }
+        </ul>
+    </div>
+
+    <div class="col-8">
+        @if (!string.IsNullOrEmpty(selected))
+        {
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="m-0">พรีวิว: @selected</h5>
+                <a class="btn btn-sm btn-primary"
+                   href="@($"/api/pdfs/{Uri.EscapeDataString(selected)}")" target="_blank">เปิดในแท็บใหม่</a>
+            </div>
+
+            <iframe style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
+                    src="@($"/api/pdfs/{Uri.EscapeDataString(selected)}")"></iframe>
+        }
+        else
+        {
+            <div class="text-muted">เลือกไฟล์ทางซ้ายเพื่อดูพรีวิว</div>
+        }
+    </div>
+</div>
+
+@code {
+    record PdfInfo(string name, long sizeBytes, DateTime modifiedUtc);
+    List<PdfInfo>? files;
+    string? selected;
+    string search = "";
+
+    IEnumerable<PdfInfo> Filtered => (files ?? Enumerable.Empty<PdfInfo>())
+        .Where(f => string.IsNullOrWhiteSpace(search) || f.name.Contains(search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        files = await Http.GetFromJsonAsync<List<PdfInfo>>("/api/pdfs");
+        selected = files?.FirstOrDefault()?.name;
+    }
+
+    void Select(string name) => selected = name;
+}
