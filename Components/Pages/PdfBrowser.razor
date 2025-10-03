@@ -48,7 +48,7 @@
                 <a class="btn btn-sm btn-primary"
                    href="@PreviewUrl(selected)" target="_blank">เปิดในแท็บใหม่</a>
             </div>
-
+      
             <iframe @key="previewNonce" style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
                     src="@previewSrc"></iframe>
         }
@@ -118,5 +118,6 @@
         previewNonce++;
         previewSrc = $"{PreviewUrl(name)}?v={previewNonce}";
         return true;
+
     }
 }
