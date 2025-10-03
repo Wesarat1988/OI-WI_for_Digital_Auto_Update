@@ -29,7 +29,7 @@
                             <div class="d-flex flex-wrap gap-2">
                                 <button type="button"
                                         class="btn btn-sm btn-outline-primary"
-                                        @onclick="() => Select(f.name)">แสดง</button>
+                                        @onclick="() => SelectAsync(f.name)">แสดง</button>
                                 <a class="btn btn-sm btn-outline-secondary"
                                    href="@PreviewUrl(f.name)" target="_blank">เปิดในแท็บใหม่</a>
                                 <a class="btn btn-sm btn-outline-secondary"
@@ -84,7 +84,15 @@
         }
     }
 
-    void Select(string name) => ApplySelection(name);
+    Task SelectAsync(string name)
+    {
+        if (!ApplySelection(name))
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(StateHasChanged);
+    }
 
     string PreviewUrl(string name) => $"/api/pdfs/{Uri.EscapeDataString(name)}";
 
@@ -121,5 +129,6 @@
         previewNonce++;
         previewSrc = $"{PreviewUrl(name)}?v={previewNonce}";
         return true;
+
     }
 }
