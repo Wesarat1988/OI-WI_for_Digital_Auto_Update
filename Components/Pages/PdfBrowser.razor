@@ -1,6 +1,7 @@
 @page "/pdfs"
 @using System.Net.Http.Json
 @inject HttpClient Http
+@inject NavigationManager Navigation
 
 <h2 class="mb-3">📄 PDF Browser (Local Server)</h2>
 
@@ -20,10 +21,19 @@
             {
                 @foreach (var f in Filtered)
                 {
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
-                        <button class="btn btn-link p-0" @onclick="() => Select(f.name)">@f.name</button>
-                        <a class="btn btn-sm btn-outline-secondary"
-                           href="@($"/api/pdfs/{Uri.EscapeDataString(f.name)}")" target="_blank">ดาวน์โหลด</a>
+                    <li class="@GetItemClasses(f.name)">
+                        <div class="d-flex flex-column gap-2">
+                            <div class="fw-semibold text-break">@f.name</div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-primary"
+                                        @onclick="() => Select(f.name)">แสดง</button>
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="@PreviewUrl(f.name)" target="_blank">เปิดในแท็บใหม่</a>
+                                <a class="btn btn-sm btn-outline-secondary"
+                                   href="@DownloadUrl(f.name)" target="_blank">ดาวน์โหลด</a>
+                            </div>
+                        </div>
                     </li>
                 }
             }
@@ -31,16 +41,16 @@
     </div>
 
     <div class="col-8">
-        @if (!string.IsNullOrEmpty(selected))
+        @if (!string.IsNullOrEmpty(selected) && !string.IsNullOrEmpty(previewSrc))
         {
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h5 class="m-0">พรีวิว: @selected</h5>
                 <a class="btn btn-sm btn-primary"
-                   href="@($"/api/pdfs/{Uri.EscapeDataString(selected)}")" target="_blank">เปิดในแท็บใหม่</a>
+                   href="@PreviewUrl(selected)" target="_blank">เปิดในแท็บใหม่</a>
             </div>
 
-            <iframe style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
-                    src="@($"/api/pdfs/{Uri.EscapeDataString(selected)}")"></iframe>
+            <iframe @key=previewNonce style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
+                    src="@previewSrc"></iframe>
         }
         else
         {
@@ -53,6 +63,8 @@
     record PdfInfo(string name, long sizeBytes, DateTime modifiedUtc);
     List<PdfInfo>? files;
     string? selected;
+    string? previewSrc;
+    int previewNonce;
     string search = "";
 
     IEnumerable<PdfInfo> Filtered => (files ?? Enumerable.Empty<PdfInfo>())
@@ -60,9 +72,56 @@
 
     protected override async Task OnInitializedAsync()
     {
-        files = await Http.GetFromJsonAsync<List<PdfInfo>>("/api/pdfs");
-        selected = files?.FirstOrDefault()?.name;
+        var endpoint = Navigation.ToAbsoluteUri("/api/pdfs");
+        files = await Http.GetFromJsonAsync<List<PdfInfo>>(endpoint);
+
+        var first = files?.FirstOrDefault()?.name;
+        if (!string.IsNullOrEmpty(first))
+        {
+            ApplySelection(first!, force: true);
+        }
     }
 
-    void Select(string name) => selected = name;
+    void Select(string name)
+    {
+        if (ApplySelection(name))
+        {
+            StateHasChanged();
+        }
+    }
+
+    string PreviewUrl(string name) => $"/api/pdfs/{Uri.EscapeDataString(name)}";
+
+    string BuildPreviewSource(string name, int nonce)
+    {
+        var baseUri = Navigation.ToAbsoluteUri(PreviewUrl(name)).ToString();
+        var separator = baseUri.Contains('?') ? '&' : '?';
+        return $"{baseUri}{separator}v={nonce}";
+    }
+
+    string DownloadUrl(string name) => $"{PreviewUrl(name)}/download";
+
+    string GetItemClasses(string name)
+    {
+        var classes = "list-group-item";
+        if (string.Equals(selected, name, StringComparison.Ordinal))
+        {
+            classes += " active";
+        }
+
+        return classes;
+    }
+
+    bool ApplySelection(string name, bool force = false)
+    {
+        if (!force && string.Equals(selected, name, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        selected = name;
+        previewNonce++;
+        previewSrc = BuildPreviewSource(name, previewNonce);
+        return true;
+    }
 }
