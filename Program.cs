@@ -6,6 +6,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+builder.Services.AddHttpClient();
+
 var app = builder.Build();
 
 if (!app.Environment.IsDevelopment())
@@ -25,7 +27,7 @@ Directory.CreateDirectory(pdfRoot);
 
 // กัน path traversal + บังคับ .pdf
 bool IsSafeFileName(string name) =>
-    Regex.IsMatch(name, @"^[\\w\\-. ]+\\.pdf$", RegexOptions.IgnoreCase);
+    Regex.IsMatch(name, @"^[\\w. -]+\\.pdf$", RegexOptions.IgnoreCase);
 
 // 1) รายการไฟล์
 app.MapGet("/api/pdfs", () =>
