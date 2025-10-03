@@ -1,6 +1,7 @@
 @page "/pdfs"
 @using System.Net.Http.Json
 @inject HttpClient Http
+@inject NavigationManager Navigation
 
 <h2 class="mb-3">📄 PDF Browser (Local Server)</h2>
 
@@ -60,7 +61,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        files = await Http.GetFromJsonAsync<List<PdfInfo>>("/api/pdfs");
+        var endpoint = Navigation.ToAbsoluteUri("/api/pdfs");
+        files = await Http.GetFromJsonAsync<List<PdfInfo>>(endpoint);
         selected = files?.FirstOrDefault()?.name;
     }
 
