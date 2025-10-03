@@ -82,9 +82,22 @@
         }
     }
 
-    void Select(string name) => ApplySelection(name);
+    void Select(string name)
+    {
+        if (ApplySelection(name))
+        {
+            StateHasChanged();
+        }
+    }
 
     string PreviewUrl(string name) => $"/api/pdfs/{Uri.EscapeDataString(name)}";
+
+    string BuildPreviewSource(string name, int nonce)
+    {
+        var baseUri = Navigation.ToAbsoluteUri(PreviewUrl(name)).ToString();
+        var separator = baseUri.Contains('?') ? '&' : '?';
+        return $"{baseUri}{separator}v={nonce}";
+    }
 
     string DownloadUrl(string name) => $"{PreviewUrl(name)}/download";
 
@@ -108,7 +121,7 @@
 
         selected = name;
         previewNonce++;
-        previewSrc = $"{PreviewUrl(name)}?v={previewNonce}";
+        previewSrc = BuildPreviewSource(name, previewNonce);
         return true;
     }
 }
