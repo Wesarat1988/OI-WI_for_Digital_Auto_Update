@@ -1,0 +1,15 @@
+# Build outputs
+bin/
+obj/
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+
+# Logs / temps
+*.log
+*.tmp
+
+# Local app settings (อย่า push ความลับ)
+appsettings.*.local.json
