@@ -1,10 +1,10 @@
-using System.Text.RegularExpressions;
-
 var builder = WebApplication.CreateBuilder(args);
 
 // เปิดโหมด Blazor Server
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+builder.Services.AddHttpClient();
 
 var app = builder.Build();
 
@@ -24,8 +24,20 @@ var pdfRoot = app.Configuration["PdfStorage:Root"]
 Directory.CreateDirectory(pdfRoot);
 
 // กัน path traversal + บังคับ .pdf
-bool IsSafeFileName(string name) =>
-    Regex.IsMatch(name, @"^[\\w\\-. ]+\\.pdf$", RegexOptions.IgnoreCase);
+bool IsSafeFileName(string name)
+{
+    if (!name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    if (!string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal))
+    {
+        return false;
+    }
+
+    return name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+}
 
 // 1) รายการไฟล์
 app.MapGet("/api/pdfs", () =>
