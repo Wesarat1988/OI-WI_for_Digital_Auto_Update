@@ -27,7 +27,7 @@
                             <div class="d-flex flex-wrap gap-2">
                                 <button type="button"
                                         class="btn btn-sm btn-outline-primary"
-                                        @onclick="() => Select(f.name)">แสดง</button>
+                                        @onclick="() => SelectAsync(f.name)">แสดง</button>
                                 <a class="btn btn-sm btn-outline-secondary"
                                    href="@PreviewUrl(f.name)" target="_blank">เปิดในแท็บใหม่</a>
                                 <a class="btn btn-sm btn-outline-secondary"
@@ -41,16 +41,16 @@
     </div>
 
     <div class="col-8">
-        @if (!string.IsNullOrEmpty(selected))
+        @if (!string.IsNullOrEmpty(selected) && !string.IsNullOrEmpty(previewSrc))
         {
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h5 class="m-0">พรีวิว: @selected</h5>
                 <a class="btn btn-sm btn-primary"
                    href="@PreviewUrl(selected)" target="_blank">เปิดในแท็บใหม่</a>
             </div>
-
-            <iframe @key="selected" style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
-                    src="@PreviewUrl(selected)"></iframe>
+      
+            <iframe @key="previewNonce" style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
+                    src="@previewSrc"></iframe>
         }
         else
         {
@@ -63,6 +63,8 @@
     record PdfInfo(string name, long sizeBytes, DateTime modifiedUtc);
     List<PdfInfo>? files;
     string? selected;
+    string? previewSrc;
+    int previewNonce;
     string search = "";
 
     IEnumerable<PdfInfo> Filtered => (files ?? Enumerable.Empty<PdfInfo>())
@@ -72,15 +74,22 @@
     {
         var endpoint = Navigation.ToAbsoluteUri("/api/pdfs");
         files = await Http.GetFromJsonAsync<List<PdfInfo>>(endpoint);
-        selected = files?.FirstOrDefault()?.name;
+
+        var first = files?.FirstOrDefault()?.name;
+        if (!string.IsNullOrEmpty(first))
+        {
+            ApplySelection(first!, force: true);
+        }
     }
 
-    void Select(string name)
+    Task SelectAsync(string name)
     {
-        if (!string.Equals(selected, name, StringComparison.Ordinal))
+        if (!ApplySelection(name))
         {
-            selected = name;
+            return Task.CompletedTask;
         }
+
+        return InvokeAsync(StateHasChanged);
     }
 
     string PreviewUrl(string name) => $"/api/pdfs/{Uri.EscapeDataString(name)}";
@@ -96,5 +105,19 @@
         }
 
         return classes;
+    }
+
+    bool ApplySelection(string name, bool force = false)
+    {
+        if (!force && string.Equals(selected, name, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        selected = name;
+        previewNonce++;
+        previewSrc = $"{PreviewUrl(name)}?v={previewNonce}";
+        return true;
+
     }
 }
