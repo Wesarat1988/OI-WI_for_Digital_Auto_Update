@@ -1,4 +1,5 @@
 @page "/pdfs"
+@using System
 @using System.Net.Http.Json
 @inject HttpClient Http
 @inject NavigationManager Navigation
@@ -64,7 +65,7 @@
     List<PdfInfo>? files;
     string? selected;
     string? previewSrc;
-    int previewNonce;
+    Guid previewNonce = Guid.Empty;
     string search = "";
 
     IEnumerable<PdfInfo> Filtered => (files ?? Enumerable.Empty<PdfInfo>())
@@ -82,17 +83,11 @@
         }
     }
 
-    void Select(string name)
-    {
-        if (ApplySelection(name))
-        {
-            StateHasChanged();
-        }
-    }
+    void Select(string name) => ApplySelection(name);
 
     string PreviewUrl(string name) => $"/api/pdfs/{Uri.EscapeDataString(name)}";
 
-    string BuildPreviewSource(string name, int nonce)
+    string BuildPreviewSource(string name, Guid nonce)
     {
         var baseUri = Navigation.ToAbsoluteUri(PreviewUrl(name)).ToString();
         var separator = baseUri.Contains('?') ? '&' : '?';
@@ -120,7 +115,7 @@
         }
 
         selected = name;
-        previewNonce++;
+        previewNonce = Guid.NewGuid();
         previewSrc = BuildPreviewSource(name, previewNonce);
         return true;
     }
