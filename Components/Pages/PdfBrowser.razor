@@ -51,7 +51,7 @@
                    href="@PreviewUrl(selected)" target="_blank">เปิดในแท็บใหม่</a>
             </div>
 
-            <iframe @key=previewNonce style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
+            <iframe @key="previewNonce" style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
                     src="@previewSrc"></iframe>
         }
         else
