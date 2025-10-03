@@ -1,6 +1,7 @@
 @page "/pdfs"
 @using System.Net.Http.Json
 @inject HttpClient Http
+@inject NavigationManager Navigation
 
 <h2 class="mb-3">📄 PDF Browser (Local Server)</h2>
 
@@ -20,10 +21,10 @@
             {
                 @foreach (var f in Filtered)
                 {
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
-                        <button class="btn btn-link p-0" @onclick="() => Select(f.name)">@f.name</button>
+                    <li class="@GetItemClasses(f.name)">
+                        <button type="button" class="btn btn-link p-0" @onclick="() => Select(f.name)">@f.name</button>
                         <a class="btn btn-sm btn-outline-secondary"
-                           href="@($"/api/pdfs/{Uri.EscapeDataString(f.name)}")" target="_blank">ดาวน์โหลด</a>
+                           href="@($"/api/pdfs/{Uri.EscapeDataString(f.name)}/download")" target="_blank">ดาวน์โหลด</a>
                     </li>
                 }
             }
@@ -39,7 +40,7 @@
                    href="@($"/api/pdfs/{Uri.EscapeDataString(selected)}")" target="_blank">เปิดในแท็บใหม่</a>
             </div>
 
-            <iframe style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
+            <iframe @key="selected" style="width:100%; height:75vh; border:1px solid #ccc; border-radius:8px;"
                     src="@($"/api/pdfs/{Uri.EscapeDataString(selected)}")"></iframe>
         }
         else
@@ -60,9 +61,27 @@
 
     protected override async Task OnInitializedAsync()
     {
-        files = await Http.GetFromJsonAsync<List<PdfInfo>>("/api/pdfs");
+        var endpoint = Navigation.ToAbsoluteUri("/api/pdfs");
+        files = await Http.GetFromJsonAsync<List<PdfInfo>>(endpoint);
         selected = files?.FirstOrDefault()?.name;
     }
 
-    void Select(string name) => selected = name;
+    void Select(string name)
+    {
+        if (!string.Equals(selected, name, StringComparison.Ordinal))
+        {
+            selected = name;
+        }
+    }
+
+    string GetItemClasses(string name)
+    {
+        var classes = "list-group-item d-flex justify-content-between align-items-center";
+        if (string.Equals(selected, name, StringComparison.Ordinal))
+        {
+            classes += " active";
+        }
+
+        return classes;
+    }
 }
