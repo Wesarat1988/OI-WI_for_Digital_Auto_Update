@@ -1,0 +1,354 @@
+@page "/"
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using System.Text.Json
+@inject HttpClient Http
+@inject NavigationManager NavManager
+
+<PageTitle>PDF Browser</PageTitle>
+
+<h1 class="mb-4">📁 PDF Browser</h1>
+
+@if (!string.IsNullOrEmpty(linesError))
+{
+    <div class="alert alert-danger" role="alert">@linesError</div>
+}
+else if (isLoadingLines)
+{
+    <div class="text-muted">กำลังโหลดรายการโฟลเดอร์...</div>
+}
+else
+{
+    <div class="mb-4 d-flex flex-wrap gap-2">
+        @foreach (var line in AllLines)
+        {
+            var isAvailable = availableLines.Contains(line);
+            <button class="btn @(string.Equals(line, selectedLine, StringComparison.OrdinalIgnoreCase) ? "btn-primary" : "btn-outline-primary")"
+                    disabled="@(!isAvailable || (isLoadingFiles && !string.Equals(line, selectedLine, StringComparison.OrdinalIgnoreCase)))"
+                    @onclick="async () => await SelectLine(line)">
+                @line
+                @if (!isAvailable)
+                {
+                    <span class="ms-2 badge bg-secondary">ไม่พบ</span>
+                }
+            </button>
+        }
+    </div>
+
+    if (!availableLines.Any())
+    {
+        <div class="alert alert-warning" role="alert">
+            ไม่พบโฟลเดอร์ F1, F2 หรือ F3 บนเซิร์ฟเวอร์
+        </div>
+    }
+}
+
+@if (!string.IsNullOrEmpty(filesError))
+{
+    <div class="alert alert-danger" role="alert">@filesError</div>
+}
+else if (isLoadingFiles)
+{
+    <div class="text-muted">กำลังโหลดไฟล์ PDF...</div>
+}
+else if (selectedLine is not null)
+{
+    if (currentFiles is null)
+    {
+        <div class="text-muted">เลือกโฟลเดอร์เพื่อดูไฟล์ PDF</div>
+    }
+    else
+    {
+        <div class="card mb-4">
+            <div class="card-header">เพิ่มไฟล์ PDF ลงใน @selectedLine</div>
+            <div class="card-body d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center">
+                <InputFile OnChange="HandleFileSelected" accept=".pdf" disabled="@isUploadingFile" />
+                <div class="flex-grow-1">
+                    @if (!string.IsNullOrEmpty(pendingFileName))
+                    {
+                        <div class="text-muted small">ไฟล์ที่เลือก: @pendingFileName</div>
+                    }
+                    else
+                    {
+                        <div class="text-muted small">เลือกไฟล์ PDF เพื่ออัปโหลด</div>
+                    }
+                </div>
+                <button class="btn btn-success"
+                        disabled="@(!CanUpload)"
+                        @onclick="UploadSelectedFile">เพิ่มไฟล์</button>
+            </div>
+            @if (!string.IsNullOrEmpty(uploadError))
+            {
+                <div class="card-footer text-danger">@uploadError</div>
+            }
+            else if (!string.IsNullOrEmpty(uploadSuccess))
+            {
+                <div class="card-footer text-success">@uploadSuccess</div>
+            }
+        </div>
+
+        if (currentFiles.Count == 0)
+        {
+            <div class="alert alert-info" role="alert">โฟลเดอร์นี้ไม่มีไฟล์ PDF</div>
+        }
+        else
+        {
+            <div class="list-group mb-4">
+                @foreach (var file in currentFiles)
+                {
+                    <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div class="text-break">@file</div>
+                        <div class="d-flex gap-2">
+                            <a class="btn btn-sm btn-outline-secondary"
+                               href="@BuildPdfUrl(selectedLine!, file)"
+                               target="_blank" rel="noopener noreferrer">เปิด</a>
+                            <button class="btn btn-sm btn-primary" @onclick="() => PreviewFile(file)">พรีวิว</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+}
+
+@if (!string.IsNullOrEmpty(previewFile) && selectedLine is not null)
+{
+    <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <strong>Preview:</strong> @previewFile
+            </div>
+            <div class="d-flex gap-2">
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="@BuildPdfUrl(selectedLine!, previewFile!)"
+                   target="_blank" rel="noopener noreferrer">เปิดในแท็บใหม่</a>
+                <button class="btn btn-sm btn-outline-danger" @onclick="ClosePreview">ปิดพรีวิว</button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <iframe src="@BuildPdfUrl(selectedLine!, previewFile!)"
+                    style="width:100%; height:70vh; border:0;"
+                    title="PDF Preview"></iframe>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly string[] AllLines = ["F1", "F2", "F3"];
+    private const long MaxUploadBytes = 50L * 1024 * 1024;
+
+    private readonly HashSet<string> availableLines = new(StringComparer.OrdinalIgnoreCase);
+    private List<string>? currentFiles;
+    private string? selectedLine;
+    private string? previewFile;
+    private bool isLoadingLines;
+    private bool isLoadingFiles;
+    private bool isUploadingFile;
+    private string? linesError;
+    private string? filesError;
+    private string? uploadError;
+    private string? uploadSuccess;
+    private IBrowserFile? pendingUpload;
+    private string? pendingFileName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFoldersAsync();
+    }
+
+    private async Task LoadFoldersAsync()
+    {
+        try
+        {
+            isLoadingLines = true;
+            linesError = null;
+            var foldersEndpoint = NavManager.ToAbsoluteUri("/api/folders");
+            var folders = await Http.GetFromJsonAsync<List<string>>(foldersEndpoint);
+            availableLines.Clear();
+            if (folders is not null)
+            {
+                foreach (var folder in folders)
+                {
+                    availableLines.Add(folder);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            linesError = $"ไม่สามารถโหลดโฟลเดอร์ได้: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingLines = false;
+        }
+
+        if (availableLines.Count > 0 && selectedLine is null)
+        {
+            var preferred = AllLines.FirstOrDefault(line => availableLines.Contains(line));
+            if (preferred is not null)
+            {
+                await SelectLine(preferred);
+            }
+        }
+    }
+
+    private async Task SelectLine(string line)
+    {
+        if (!availableLines.Contains(line))
+        {
+            return;
+        }
+
+        if (string.Equals(selectedLine, line, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        selectedLine = line;
+        previewFile = null;
+        currentFiles = null;
+        ResetUploadState();
+        await LoadFilesAsync(line);
+    }
+
+    private async Task LoadFilesAsync(string line)
+    {
+        try
+        {
+            isLoadingFiles = true;
+            filesError = null;
+            var filesEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(line)}");
+            currentFiles = await Http.GetFromJsonAsync<List<string>>(filesEndpoint);
+            currentFiles ??= new List<string>();
+        }
+        catch (Exception ex)
+        {
+            filesError = $"ไม่สามารถโหลดไฟล์ได้: {ex.Message}";
+            currentFiles = new List<string>();
+        }
+        finally
+        {
+            isLoadingFiles = false;
+        }
+    }
+
+    private void PreviewFile(string file)
+    {
+        previewFile = file;
+    }
+
+    private void ClosePreview()
+    {
+        previewFile = null;
+    }
+
+    private static string BuildPdfUrl(string line, string file)
+    {
+        return $"/pdf/{Uri.EscapeDataString(line)}/{Uri.EscapeDataString(file)}";
+    }
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        uploadError = null;
+        uploadSuccess = null;
+        pendingUpload = null;
+        pendingFileName = null;
+
+        var file = e.File;
+        if (file is null)
+        {
+            uploadError = "ไม่พบไฟล์ที่เลือก";
+            return;
+        }
+
+        if (!file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            uploadError = "กรุณาเลือกไฟล์ PDF (.pdf)";
+            return;
+        }
+
+        pendingUpload = file;
+        pendingFileName = file.Name;
+    }
+
+    private bool CanUpload => selectedLine is not null && pendingUpload is not null && !isUploadingFile;
+
+    private async Task UploadSelectedFile()
+    {
+        if (!CanUpload || selectedLine is null || pendingUpload is null)
+        {
+            return;
+        }
+
+        uploadError = null;
+        uploadSuccess = null;
+        isUploadingFile = true;
+
+        try
+        {
+            var uploadEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(selectedLine)}/upload");
+            using var content = new MultipartFormDataContent();
+            var stream = pendingUpload.OpenReadStream(MaxUploadBytes);
+            var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+            content.Add(streamContent, "file", pendingUpload.Name);
+
+            var response = await Http.PostAsync(uploadEndpoint, content);
+            if (response.IsSuccessStatusCode)
+            {
+                var uploadedName = pendingFileName ?? pendingUpload.Name;
+                uploadSuccess = string.IsNullOrEmpty(uploadedName)
+                    ? "อัปโหลดไฟล์เรียบร้อย"
+                    : $"อัปโหลดไฟล์ {uploadedName} เรียบร้อย";
+                await LoadFilesAsync(selectedLine);
+                pendingUpload = null;
+                pendingFileName = null;
+            }
+            else
+            {
+                var message = await response.Content.ReadAsStringAsync();
+                var mediaType = response.Content.Headers.ContentType?.MediaType;
+                if (string.Equals(mediaType, "application/problem+json", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(message);
+                        if (doc.RootElement.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+                        {
+                            message = detail.GetString() ?? message;
+                        }
+                        else if (doc.RootElement.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
+                        {
+                            message = title.GetString() ?? message;
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // ignore parsing failures and fall back to raw message
+                    }
+                }
+
+                uploadError = string.IsNullOrWhiteSpace(message)
+                    ? $"อัปโหลดไม่สำเร็จ (รหัส {response.StatusCode})"
+                    : message;
+            }
+        }
+        catch (Exception ex)
+        {
+            uploadError = $"อัปโหลดไม่สำเร็จ: {ex.Message}";
+        }
+        finally
+        {
+            isUploadingFile = false;
+        }
+    }
+
+    private void ResetUploadState()
+    {
+        isUploadingFile = false;
+        uploadError = null;
+        uploadSuccess = null;
+        pendingUpload = null;
+        pendingFileName = null;
+    }
+}
