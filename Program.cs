@@ -1,6 +1,7 @@
+using System.Net.Mime;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// เปิดโหมด Blazor Server
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
@@ -18,84 +19,149 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
 
-// ====== PDF APIs ======
-var pdfRoot = app.Configuration["PdfStorage:Root"]
-              ?? Path.Combine(app.Environment.ContentRootPath, "PDFs");
-Directory.CreateDirectory(pdfRoot);
+// ====== PDF browser configuration ======
+// TODO: Replace the UNC path below with the actual PDF root if it differs in your environment.
+//       Ensure the web process identity has READ access on both the share and NTFS ACLs.
+var pdfRoot = builder.Configuration["PdfStorage:Root"]
+              ?? @"\\\\10.192.132.91\\PdfRoot";
 
-// กัน path traversal + บังคับ .pdf
-bool IsSafeFileName(string name)
+if (!Directory.Exists(pdfRoot))
 {
-    if (!name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+    app.Logger.LogWarning("Configured PDF root '{PdfRoot}' is not accessible. Confirm the share path and permissions.", pdfRoot);
+}
+var allowedLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    "F1",
+    "F2",
+    "F3"
+};
+
+static bool IsValidPdfFileName(string fileName)
+{
+    if (string.IsNullOrWhiteSpace(fileName))
     {
         return false;
     }
 
-    if (!string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal))
+    if (!fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
     {
         return false;
     }
 
-    return name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+    if (!string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal))
+    {
+        return false;
+    }
+
+    return fileName.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
 }
 
-// 1) รายการไฟล์
-app.MapGet("/api/pdfs", () =>
+bool TryResolveLine(string line, out string? linePath)
 {
-    var files = Directory.EnumerateFiles(pdfRoot, "*.pdf", SearchOption.TopDirectoryOnly)
-                         .Select(full => new
-                         {
-                             name = Path.GetFileName(full),
-                             sizeBytes = new FileInfo(full).Length,
-                             modifiedUtc = File.GetLastWriteTimeUtc(full),
-                         })
-                         .OrderByDescending(f => f.modifiedUtc);
-    return Results.Ok(files);
-});
-
-IResult? ValidatePdfRequest(string name, out string fullPath)
-{
-    fullPath = string.Empty;
-    if (!IsSafeFileName(name))
+    linePath = null;
+    if (!allowedLines.Contains(line))
     {
-        return Results.BadRequest("invalid file name");
+        return false;
     }
 
-    var candidate = Path.Combine(pdfRoot, name);
+    var candidate = Path.Combine(pdfRoot, line);
+    if (!Directory.Exists(candidate))
+    {
+        return false;
+    }
+
+    linePath = candidate;
+    return true;
+}
+
+IResult? TryResolvePdf(string line, string file, out string? filePath)
+{
+    filePath = null;
+    if (!TryResolveLine(line, out var linePath))
+    {
+        return Results.NotFound("Unknown folder");
+    }
+
+    if (!IsValidPdfFileName(file))
+    {
+        return Results.BadRequest("Invalid PDF file name");
+    }
+
+    var candidate = Path.Combine(linePath!, file);
     if (!System.IO.File.Exists(candidate))
     {
         return Results.NotFound();
     }
 
-    fullPath = candidate;
+    filePath = candidate;
     return null;
 }
 
-// 2) พรีวิว inline
-app.MapGet("/api/pdfs/{name}", (string name) =>
+app.MapGet("/api/folders", () =>
 {
-    if (ValidatePdfRequest(name, out var fullPath) is { } error)
+    try
+    {
+        var existing = allowedLines
+            .Select(line => new { line, path = Path.Combine(pdfRoot, line) })
+            .Where(x => Directory.Exists(x.path))
+            .Select(x => x.line)
+            .OrderBy(line => line)
+            .ToList();
+
+        return Results.Ok(existing);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to enumerate folders under {PdfRoot}", pdfRoot);
+        return Results.Problem("ไม่สามารถอ่านรายการโฟลเดอร์ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
+});
+
+app.MapGet("/api/folders/{line}", (string line) =>
+{
+    if (!TryResolveLine(line, out var linePath))
+    {
+        return Results.NotFound();
+    }
+
+    try
+    {
+        var files = Directory.EnumerateFiles(linePath!, "*.pdf", SearchOption.TopDirectoryOnly)
+            .Where(path => IsValidPdfFileName(Path.GetFileName(path)))
+            .Select(Path.GetFileName)
+            .Where(name => name is not null)
+            .OrderBy(name => name)
+            .ToList()!;
+
+        return Results.Ok(files);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to enumerate files for {Line} in {PdfRoot}", line, pdfRoot);
+        return Results.Problem("ไม่สามารถอ่านไฟล์ในโฟลเดอร์ที่เลือกได้ กรุณาตรวจสอบสิทธิ์การเข้าถึง");
+    }
+});
+
+app.MapGet("/pdf/{line}/{file}", (string line, string file) =>
+{
+    if (TryResolvePdf(line, file, out var filePath) is { } error)
     {
         return error;
     }
 
-    return Results.File(fullPath, "application/pdf", enableRangeProcessing: true);
-});
-
-// 3) ดาวน์โหลด (บังคับแนบไฟล์)
-app.MapGet("/api/pdfs/{name}/download", (string name) =>
-{
-    if (ValidatePdfRequest(name, out var fullPath) is { } error)
+    try
     {
-        return error;
+        var stream = System.IO.File.OpenRead(filePath!);
+        return Results.File(stream, MediaTypeNames.Application.Pdf, enableRangeProcessing: true);
     }
-
-    var stream = System.IO.File.OpenRead(fullPath);
-    return Results.File(stream, "application/pdf", fileDownloadName: name, enableRangeProcessing: true);
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to open PDF {File} for line {Line}", file, line);
+        return Results.Problem("ไม่สามารถเปิดไฟล์ PDF ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
 });
-// ====== /PDF APIs ======
+// ====== /PDF browser configuration ======
 
-// NOTE: เปลี่ยน BlazorPdfApp เป็นชื่อ namespace โปรเจกต์คุณถ้าไม่ตรง
 app.MapRazorComponents<BlazorPdfApp.Components.App>()
    .AddInteractiveServerRenderMode();
 
