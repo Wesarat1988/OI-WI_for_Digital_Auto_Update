@@ -67,10 +67,13 @@
     {
         var endpoint = Navigation.ToAbsoluteUri("/api/pdfs");
         files = await Http.GetFromJsonAsync<List<PdfInfo>>(endpoint);
-        selected = files?.FirstOrDefault()?.name;
-    }
 
-    void Select(string name) => selected = name;
+        var initial = files?.FirstOrDefault();
+        if (initial is not null)
+        {
+            ApplySelection(initial.name, force: true);
+        }
+    }
 
     void Select(string name) => ApplySelection(name);
 
