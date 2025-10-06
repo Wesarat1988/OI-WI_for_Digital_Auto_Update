@@ -1,4 +1,7 @@
 using System.Net.Mime;
+using Microsoft.AspNetCore.Http.Features;
+
+const long MaxUploadBytes = 50L * 1024 * 1024; // 50 MB upload limit per PDF
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -6,6 +9,10 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddHttpClient();
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = MaxUploadBytes;
+});
 
 var app = builder.Build();
 
@@ -21,7 +28,7 @@ app.UseAntiforgery();
 
 // ====== PDF browser configuration ======
 // TODO: Replace the UNC path below with the actual PDF root if it differs in your environment.
-//       Ensure the web process identity has READ access on both the share and NTFS ACLs.
+//       Ensure the web process identity has READ/WRITE access on both the share and NTFS ACLs.
 var pdfRoot = builder.Configuration["PdfStorage:Root"]
               ?? @"\\\\10.192.132.91\\PdfRoot";
 
@@ -158,6 +165,58 @@ app.MapGet("/pdf/{line}/{file}", (string line, string file) =>
     {
         app.Logger.LogError(ex, "Failed to open PDF {File} for line {Line}", file, line);
         return Results.Problem("ไม่สามารถเปิดไฟล์ PDF ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
+});
+
+app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest request) =>
+{
+    if (!TryResolveLine(line, out var linePath))
+    {
+        return Results.NotFound("Unknown folder");
+    }
+
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest("ต้องเป็น multipart/form-data");
+    }
+
+    try
+    {
+        var form = await request.ReadFormAsync();
+        var formFile = form.Files.GetFile("file");
+
+        if (formFile is null || formFile.Length == 0)
+        {
+            return Results.BadRequest("ไม่พบไฟล์หรือไฟล์ว่าง");
+        }
+
+        var originalName = Path.GetFileName(formFile.FileName);
+        if (!IsValidPdfFileName(originalName))
+        {
+            return Results.BadRequest("รองรับเฉพาะไฟล์ .pdf เท่านั้น");
+        }
+
+        if (formFile.Length > MaxUploadBytes)
+        {
+            return Results.BadRequest($"ไฟล์มีขนาดเกิน {MaxUploadBytes / (1024 * 1024)} MB");
+        }
+
+        var destination = Path.Combine(linePath!, originalName);
+        if (System.IO.File.Exists(destination))
+        {
+            return Results.Conflict("ไฟล์นี้มีอยู่แล้ว");
+        }
+
+        await using var readStream = formFile.OpenReadStream(MaxUploadBytes);
+        await using var writeStream = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        await readStream.CopyToAsync(writeStream);
+
+        return Results.Ok(new { file = originalName });
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to upload PDF to {Line}", line);
+        return Results.Problem("ไม่สามารถอัปโหลดไฟล์ได้ กรุณาตรวจสอบสิทธิ์การเข้าถึง");
     }
 });
 // ====== /PDF browser configuration ======
