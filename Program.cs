@@ -207,7 +207,7 @@ app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest reques
             return Results.Conflict("ไฟล์นี้มีอยู่แล้ว");
         }
 
-        await using var readStream = formFile.OpenReadStream(MaxUploadBytes);
+        await using var readStream = formFile.OpenReadStream();
         await using var writeStream = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         await readStream.CopyToAsync(writeStream);
 
