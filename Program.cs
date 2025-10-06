@@ -20,10 +20,15 @@ app.UseStaticFiles();
 app.UseAntiforgery();
 
 // ====== PDF browser configuration ======
-// TODO: Replace the UNC path below with the actual PDF root (e.g. @"D:\\PdfRoot")
+// TODO: Replace the UNC path below with the actual PDF root if it differs in your environment.
 //       Ensure the web process identity has READ access on both the share and NTFS ACLs.
 var pdfRoot = builder.Configuration["PdfStorage:Root"]
-              ?? @"\\10.192.132.91\PdfRoot";
+              ?? @"\\\\10.192.132.91\\PdfRoot";
+
+if (!Directory.Exists(pdfRoot))
+{
+    app.Logger.LogWarning("Configured PDF root '{PdfRoot}' is not accessible. Confirm the share path and permissions.", pdfRoot);
+}
 var allowedLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 {
     "F1",
@@ -94,14 +99,22 @@ IResult? TryResolvePdf(string line, string file, out string? filePath)
 
 app.MapGet("/api/folders", () =>
 {
-    var existing = allowedLines
-        .Select(line => new { line, path = Path.Combine(pdfRoot, line) })
-        .Where(x => Directory.Exists(x.path))
-        .Select(x => x.line)
-        .OrderBy(line => line)
-        .ToList();
+    try
+    {
+        var existing = allowedLines
+            .Select(line => new { line, path = Path.Combine(pdfRoot, line) })
+            .Where(x => Directory.Exists(x.path))
+            .Select(x => x.line)
+            .OrderBy(line => line)
+            .ToList();
 
-    return Results.Ok(existing);
+        return Results.Ok(existing);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to enumerate folders under {PdfRoot}", pdfRoot);
+        return Results.Problem("ไม่สามารถอ่านรายการโฟลเดอร์ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
 });
 
 app.MapGet("/api/folders/{line}", (string line) =>
@@ -111,14 +124,22 @@ app.MapGet("/api/folders/{line}", (string line) =>
         return Results.NotFound();
     }
 
-    var files = Directory.EnumerateFiles(linePath!, "*.pdf", SearchOption.TopDirectoryOnly)
-        .Where(path => IsValidPdfFileName(Path.GetFileName(path)))
-        .Select(Path.GetFileName)
-        .Where(name => name is not null)
-        .OrderBy(name => name)
-        .ToList()!;
+    try
+    {
+        var files = Directory.EnumerateFiles(linePath!, "*.pdf", SearchOption.TopDirectoryOnly)
+            .Where(path => IsValidPdfFileName(Path.GetFileName(path)))
+            .Select(Path.GetFileName)
+            .Where(name => name is not null)
+            .OrderBy(name => name)
+            .ToList()!;
 
-    return Results.Ok(files);
+        return Results.Ok(files);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to enumerate files for {Line} in {PdfRoot}", line, pdfRoot);
+        return Results.Problem("ไม่สามารถอ่านไฟล์ในโฟลเดอร์ที่เลือกได้ กรุณาตรวจสอบสิทธิ์การเข้าถึง");
+    }
 });
 
 app.MapGet("/pdf/{line}/{file}", (string line, string file) =>
@@ -128,8 +149,16 @@ app.MapGet("/pdf/{line}/{file}", (string line, string file) =>
         return error;
     }
 
-    var stream = System.IO.File.OpenRead(filePath!);
-    return Results.File(stream, MediaTypeNames.Application.Pdf, enableRangeProcessing: true);
+    try
+    {
+        var stream = System.IO.File.OpenRead(filePath!);
+        return Results.File(stream, MediaTypeNames.Application.Pdf, enableRangeProcessing: true);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to open PDF {File} for line {Line}", file, line);
+        return Results.Problem("ไม่สามารถเปิดไฟล์ PDF ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
 });
 // ====== /PDF browser configuration ======
 
