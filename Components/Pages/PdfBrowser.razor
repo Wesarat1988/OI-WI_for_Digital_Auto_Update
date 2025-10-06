@@ -23,9 +23,12 @@
                 @foreach (var f in Filtered)
                 {
                     <li class="list-group-item d-flex justify-content-between align-items-center">
-                        <button class="btn btn-link p-0" @onclick="() => Select(f.name)">@f.name</button>
-                        <a class="btn btn-sm btn-outline-secondary"
-                           href="@($"/api/pdfs/{Uri.EscapeDataString(f.name)}/download")" target="_blank">ดาวน์โหลด</a>
+                        <span class="flex-grow-1 text-truncate me-3" title="@f.name">@f.name</span>
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => Select(f.name)">แสดง</button>
+                            <a class="btn btn-sm btn-outline-secondary"
+                               href="@($"/api/pdfs/{Uri.EscapeDataString(f.name)}/download")" target="_blank">ดาวน์โหลด</a>
+                        </div>
                     </li>
                 }
             }
@@ -67,10 +70,13 @@
     {
         var endpoint = Navigation.ToAbsoluteUri("/api/pdfs");
         files = await Http.GetFromJsonAsync<List<PdfInfo>>(endpoint);
-        selected = files?.FirstOrDefault()?.name;
-    }
 
-    void Select(string name) => selected = name;
+        var initial = files?.FirstOrDefault();
+        if (initial is not null)
+        {
+            ApplySelection(initial.name, force: true);
+        }
+    }
 
     void Select(string name) => ApplySelection(name);
 
