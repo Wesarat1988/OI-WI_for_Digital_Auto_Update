@@ -1,6 +1,7 @@
 @page "/"
 @using System.Net.Http.Json
 @inject HttpClient Http
+@inject NavigationManager NavManager
 @rendermode InteractiveServer
 
 <PageTitle>PDF Browser</PageTitle>
@@ -120,7 +121,8 @@ else if (selectedLine is not null)
         {
             isLoadingLines = true;
             linesError = null;
-            var folders = await Http.GetFromJsonAsync<List<string>>("/api/folders");
+            var foldersEndpoint = NavManager.ToAbsoluteUri("/api/folders");
+            var folders = await Http.GetFromJsonAsync<List<string>>(foldersEndpoint);
             availableLines.Clear();
             if (folders is not null)
             {
@@ -173,7 +175,8 @@ else if (selectedLine is not null)
         {
             isLoadingFiles = true;
             filesError = null;
-            currentFiles = await Http.GetFromJsonAsync<List<string>>($"/api/folders/{Uri.EscapeDataString(line)}");
+            var filesEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(line)}");
+            currentFiles = await Http.GetFromJsonAsync<List<string>>(filesEndpoint);
             currentFiles ??= new List<string>();
         }
         catch (Exception ex)
