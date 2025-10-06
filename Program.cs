@@ -23,7 +23,7 @@ app.UseAntiforgery();
 // TODO: Replace the UNC path below with the actual PDF root (e.g. @"D:\\PdfRoot")
 //       Ensure the web process identity has READ access on both the share and NTFS ACLs.
 var pdfRoot = builder.Configuration["PdfStorage:Root"]
-              ?? @"\\\\10.192.132.91\\PdfRoot";
+              ?? @"\\THWGRF6PD015691\PdfRoot";
 var allowedLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 {
     "F1",
