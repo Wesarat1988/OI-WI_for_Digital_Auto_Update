@@ -109,7 +109,7 @@
         {
             isLoadingFolders = true;
             foldersError = null;
-            var folders = await Http.GetFromJsonAsync<List<string>>("/api/folders");
+            var folders = await Http.GetFromJsonAsync<List<string>>(Navigation.ToAbsoluteUri("/api/folders"));
             availableLines.Clear();
             if (folders is not null)
             {
@@ -149,7 +149,7 @@
         try
         {
             isLoadingFiles = true;
-            files = await Http.GetFromJsonAsync<List<string>>($"/api/folders/{Uri.EscapeDataString(line)}");
+            files = await Http.GetFromJsonAsync<List<string>>(Navigation.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(line)}"));
             files ??= new List<string>();
         }
         catch (Exception ex)
