@@ -119,9 +119,12 @@ else if (selectedLine is not null)
             <div>
                 <strong>Preview:</strong> @previewFile
             </div>
-            <a class="btn btn-sm btn-outline-secondary"
-               href="@BuildPdfUrl(selectedLine!, previewFile!)"
-               target="_blank" rel="noopener noreferrer">เปิดในแท็บใหม่</a>
+            <div class="d-flex gap-2">
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="@BuildPdfUrl(selectedLine!, previewFile!)"
+                   target="_blank" rel="noopener noreferrer">เปิดในแท็บใหม่</a>
+                <button class="btn btn-sm btn-outline-danger" @onclick="ClosePreview">ปิดพรีวิว</button>
+            </div>
         </div>
         <div class="card-body p-0">
             <iframe src="@BuildPdfUrl(selectedLine!, previewFile!)"
@@ -233,6 +236,11 @@ else if (selectedLine is not null)
     private void PreviewFile(string file)
     {
         previewFile = file;
+    }
+
+    private void ClosePreview()
+    {
+        previewFile = null;
     }
 
     private static string BuildPdfUrl(string line, string file)
