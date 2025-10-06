@@ -1,0 +1,201 @@
+@page "/"
+@using System.Net.Http.Json
+@inject HttpClient Http
+@inject NavigationManager NavManager
+
+<PageTitle>PDF Browser</PageTitle>
+
+<h1 class="mb-4">📁 PDF Browser</h1>
+
+@if (!string.IsNullOrEmpty(linesError))
+{
+    <div class="alert alert-danger" role="alert">@linesError</div>
+}
+else if (isLoadingLines)
+{
+    <div class="text-muted">กำลังโหลดรายการโฟลเดอร์...</div>
+}
+else
+{
+    <div class="mb-4 d-flex flex-wrap gap-2">
+        @foreach (var line in AllLines)
+        {
+            var isAvailable = availableLines.Contains(line);
+            <button class="btn @(string.Equals(line, selectedLine, StringComparison.OrdinalIgnoreCase) ? "btn-primary" : "btn-outline-primary")"
+                    disabled="@(!isAvailable || (isLoadingFiles && !string.Equals(line, selectedLine, StringComparison.OrdinalIgnoreCase)))"
+                    @onclick="async () => await SelectLine(line)">
+                @line
+                @if (!isAvailable)
+                {
+                    <span class="ms-2 badge bg-secondary">ไม่พบ</span>
+                }
+            </button>
+        }
+    </div>
+
+    if (!availableLines.Any())
+    {
+        <div class="alert alert-warning" role="alert">
+            ไม่พบโฟลเดอร์ F1, F2 หรือ F3 บนเซิร์ฟเวอร์
+        </div>
+    }
+}
+
+@if (!string.IsNullOrEmpty(filesError))
+{
+    <div class="alert alert-danger" role="alert">@filesError</div>
+}
+else if (isLoadingFiles)
+{
+    <div class="text-muted">กำลังโหลดไฟล์ PDF...</div>
+}
+else if (selectedLine is not null)
+{
+    if (currentFiles is null)
+    {
+        <div class="text-muted">เลือกโฟลเดอร์เพื่อดูไฟล์ PDF</div>
+    }
+    else if (currentFiles.Count == 0)
+    {
+        <div class="alert alert-info" role="alert">โฟลเดอร์นี้ไม่มีไฟล์ PDF</div>
+    }
+    else
+    {
+        <div class="list-group mb-4">
+            @foreach (var file in currentFiles)
+            {
+                <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div class="text-break">@file</div>
+                    <div class="d-flex gap-2">
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="@BuildPdfUrl(selectedLine!, file)"
+                           target="_blank" rel="noopener noreferrer">เปิด</a>
+                        <button class="btn btn-sm btn-primary" @onclick="() => PreviewFile(file)">พรีวิว</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@if (!string.IsNullOrEmpty(previewFile) && selectedLine is not null)
+{
+    <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <strong>Preview:</strong> @previewFile
+            </div>
+            <a class="btn btn-sm btn-outline-secondary"
+               href="@BuildPdfUrl(selectedLine!, previewFile!)"
+               target="_blank" rel="noopener noreferrer">เปิดในแท็บใหม่</a>
+        </div>
+        <div class="card-body p-0">
+            <iframe src="@BuildPdfUrl(selectedLine!, previewFile!)"
+                    style="width:100%; height:70vh; border:0;"
+                    title="PDF Preview"></iframe>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly string[] AllLines = ["F1", "F2", "F3"];
+
+    private readonly HashSet<string> availableLines = new(StringComparer.OrdinalIgnoreCase);
+    private List<string>? currentFiles;
+    private string? selectedLine;
+    private string? previewFile;
+    private bool isLoadingLines;
+    private bool isLoadingFiles;
+    private string? linesError;
+    private string? filesError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFoldersAsync();
+    }
+
+    private async Task LoadFoldersAsync()
+    {
+        try
+        {
+            isLoadingLines = true;
+            linesError = null;
+            var foldersEndpoint = NavManager.ToAbsoluteUri("/api/folders");
+            var folders = await Http.GetFromJsonAsync<List<string>>(foldersEndpoint);
+            availableLines.Clear();
+            if (folders is not null)
+            {
+                foreach (var folder in folders)
+                {
+                    availableLines.Add(folder);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            linesError = $"ไม่สามารถโหลดโฟลเดอร์ได้: {ex.Message}";
+        }
+        finally
+        {
+            isLoadingLines = false;
+        }
+
+        if (availableLines.Count > 0 && selectedLine is null)
+        {
+            var preferred = AllLines.FirstOrDefault(line => availableLines.Contains(line));
+            if (preferred is not null)
+            {
+                await SelectLine(preferred);
+            }
+        }
+    }
+
+    private async Task SelectLine(string line)
+    {
+        if (!availableLines.Contains(line))
+        {
+            return;
+        }
+
+        if (string.Equals(selectedLine, line, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        selectedLine = line;
+        previewFile = null;
+        currentFiles = null;
+        await LoadFilesAsync(line);
+    }
+
+    private async Task LoadFilesAsync(string line)
+    {
+        try
+        {
+            isLoadingFiles = true;
+            filesError = null;
+            var filesEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(line)}");
+            currentFiles = await Http.GetFromJsonAsync<List<string>>(filesEndpoint);
+            currentFiles ??= new List<string>();
+        }
+        catch (Exception ex)
+        {
+            filesError = $"ไม่สามารถโหลดไฟล์ได้: {ex.Message}";
+            currentFiles = new List<string>();
+        }
+        finally
+        {
+            isLoadingFiles = false;
+        }
+    }
+
+    private void PreviewFile(string file)
+    {
+        previewFile = file;
+    }
+
+    private static string BuildPdfUrl(string line, string file)
+    {
+        return $"/pdf/{Uri.EscapeDataString(line)}/{Uri.EscapeDataString(file)}";
+    }
+}
