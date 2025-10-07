@@ -396,7 +396,7 @@ else if (lineStatuses is null || lineStatuses.Count == 0)
 }
 else
 {
-    foreach (var line in lineStatuses)
+    foreach (var line in GetOrderedLineStatuses())
     {
         <div class="card mb-4 shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -493,6 +493,32 @@ else
         }
     }
 
+    private IEnumerable<LineEditStatusResponse> GetOrderedLineStatuses()
+    {
+        if (lineStatuses is null)
+        {
+            return Enumerable.Empty<LineEditStatusResponse>();
+        }
+
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return lineStatuses;
+        }
+
+        var term = searchTerm.Trim();
+
+        return lineStatuses
+            .Select((line, index) => new
+            {
+                Line = line,
+                Index = index,
+                Rank = CalculateLineMatchRank(line, term)
+            })
+            .OrderBy(entry => entry.Rank)
+            .ThenBy(entry => entry.Index)
+            .Select(entry => entry.Line);
+    }
+
     private IEnumerable<FolderSearchResult> FilteredFolderResults
     {
         get
@@ -558,6 +584,53 @@ else
 
         var term = searchTerm.Trim();
         return documentIndex.Count(d => CalculateDocumentMatchRank(d, term) < int.MaxValue);
+    }
+
+    private int CalculateLineMatchRank(LineEditStatusResponse line, string term)
+    {
+        var ranks = new List<int>
+        {
+            CalculateMatchRank(term, line.Line)
+        };
+
+        if (line.Root is not null)
+        {
+            ranks.Add(CalculateMatchRank(term, line.Root.Name));
+
+            if (line.Root.PathSegments is not null && line.Root.PathSegments.Count > 0)
+            {
+                var path = string.Join('/', line.Root.PathSegments);
+                ranks.Add(CalculateMatchRank(term, path));
+            }
+        }
+
+        if (activeTab == SearchTab.Document)
+        {
+            var documentRanks = documentIndex
+                .Where(d => string.Equals(d.Line, line.Line, StringComparison.OrdinalIgnoreCase))
+                .Select(d => CalculateDocumentMatchRank(d, term))
+                .Where(rank => rank < int.MaxValue)
+                .DefaultIfEmpty(int.MaxValue)
+                .Min();
+
+            ranks.Add(documentRanks);
+        }
+        else
+        {
+            var folderRanks = folderIndex
+                .Where(f => string.Equals(f.Line, line.Line, StringComparison.OrdinalIgnoreCase))
+                .Select(f => CalculateFolderMatchRank(f, term))
+                .Where(rank => rank < int.MaxValue)
+                .DefaultIfEmpty(int.MaxValue)
+                .Min();
+
+            ranks.Add(folderRanks);
+        }
+
+        return ranks
+            .Where(rank => rank < int.MaxValue)
+            .DefaultIfEmpty(int.MaxValue)
+            .Min();
     }
 
     private static int CalculateFolderMatchRank(FolderSearchResult folder, string term)
