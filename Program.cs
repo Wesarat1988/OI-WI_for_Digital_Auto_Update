@@ -196,6 +196,37 @@ static string DescribeRelativeTime(DateTime timestampUtc)
     {
         delta = TimeSpan.Zero;
     }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to enumerate folders under {PdfRoot}", pdfRoot);
+        return Results.Problem("ไม่สามารถอ่านรายการโฟลเดอร์ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
+});
+
+app.MapGet("/api/folders/{line}", (string line, HttpRequest request) =>
+{
+    var pathSegments = ParsePathSegments(request.Query["path"]);
+    if (!TryResolveDirectory(line, pathSegments, out var directoryPath, out var normalizedSegments, out var error))
+    {
+        return error ?? Results.NotFound();
+    }
+
+    try
+    {
+        var folders = Directory.EnumerateDirectories(directoryPath!, "*", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .Where(name => name is not null && IsValidFolderName(name))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => name!)
+            .ToList();
+
+        var files = Directory.EnumerateFiles(directoryPath!, "*.pdf", SearchOption.TopDirectoryOnly)
+            .Where(path => IsValidPdfFileName(Path.GetFileName(path)))
+            .Select(Path.GetFileName)
+            .Where(name => name is not null)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => name!)
+            .ToList();
 
     if (delta.TotalMinutes < 1)
     {
