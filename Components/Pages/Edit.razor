@@ -136,6 +136,74 @@
         color: var(--bs-secondary, #6c757d);
     }
 
+    .document-timeline {
+        position: relative;
+        background-color: #f8f9fa;
+        border-radius: 1rem;
+        border: 1px solid var(--bs-border-color, #dee2e6);
+        padding: 1.25rem 1.5rem;
+    }
+
+    .document-name {
+        font-size: 1rem;
+    }
+
+    .version-timeline {
+        position: relative;
+        margin-left: 0.35rem;
+        padding-left: 1.5rem;
+        border-left: 2px solid var(--bs-border-color, #d0d7de);
+    }
+
+    .version-node {
+        position: relative;
+        margin-bottom: 1.15rem;
+    }
+
+    .version-node:last-child {
+        margin-bottom: 0;
+    }
+
+    .version-node::before {
+        content: '';
+        position: absolute;
+        left: -1.05rem;
+        top: 0.75rem;
+        width: 0.75rem;
+        height: 0.75rem;
+        border-radius: 50%;
+        background-color: var(--bs-primary, #0d6efd);
+        box-shadow: 0 0 0 4px #ffffff;
+    }
+
+    .version-node.latest::before {
+        background-color: var(--bs-success, #198754);
+    }
+
+    .version-content {
+        background-color: #ffffff;
+        border-radius: 0.85rem;
+        border: 1px solid var(--bs-border-color, #dee2e6);
+        padding: 0.9rem 1.1rem;
+        box-shadow: 0 0.25rem 0.5rem rgba(15, 23, 42, 0.05);
+    }
+
+    .version-node.latest .version-content {
+        border-color: rgba(25, 135, 84, 0.35);
+        box-shadow: 0 0.3rem 0.6rem rgba(25, 135, 84, 0.2);
+        background-color: rgba(25, 135, 84, 0.08);
+    }
+
+    .version-comment {
+        margin-top: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.65rem;
+        background-color: rgba(13, 110, 253, 0.08);
+        color: var(--bs-body-color, #212529);
+        font-size: 0.9rem;
+        line-height: 1.4;
+    }
+
     @@media (max-width: 767.98px) {
         .branch-children {
             border-left: none;
@@ -151,6 +219,19 @@
 
         .branch-card::after {
             display: none;
+        }
+
+        .document-timeline {
+            padding: 1rem;
+        }
+
+        .version-timeline {
+            margin-left: 0;
+            padding-left: 1.1rem;
+        }
+
+        .version-node::before {
+            left: -0.85rem;
         }
     }
 </style>
@@ -265,6 +346,10 @@ else
         {
             var seq = 0;
             var orderedChildren = OrderBranches(branch.Children);
+            var orderedDocuments = (branch.Documents ?? new List<DocumentTimelineResponse>())
+                .OrderByDescending(d => d.LatestUploadedUtc ?? DateTime.MinValue)
+                .ThenBy(d => d.BaseName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
             var recentFiles = branch.RecentFiles
                 .OrderByDescending(f => f.LastModifiedUtc)
                 .Take(3)
@@ -349,6 +434,18 @@ else
                 builder.AddContent(seq++, branch.ErrorMessage);
                 builder.CloseElement();
             }
+            else if (orderedDocuments.Count > 0)
+            {
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "document-timelines d-flex flex-column gap-3 mt-3");
+
+                foreach (var document in orderedDocuments)
+                {
+                    builder.AddContent(seq++, RenderDocumentTimeline(document));
+                }
+
+                builder.CloseElement();
+            }
             else if (recentFiles.Count > 0)
             {
                 builder.OpenElement(seq++, "div");
@@ -366,6 +463,13 @@ else
 
                 builder.CloseElement();
             }
+            else
+            {
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "text-muted small");
+                builder.AddContent(seq++, "ยังไม่มีไฟล์ PDF ในกิ่งนี้");
+                builder.CloseElement();
+            }
 
             builder.CloseElement();
 
@@ -378,6 +482,109 @@ else
                 {
                     var child = orderedChildren[i];
                     builder.AddContent(seq++, RenderBranchNode(child, depth + 1, isLatest: i == 0));
+                }
+
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        };
+    }
+
+    private RenderFragment RenderDocumentTimeline(DocumentTimelineResponse document)
+    {
+        return builder =>
+        {
+            var seq = 0;
+            var versions = document.Versions
+                .OrderByDescending(v => v.UploadedUtc)
+                .ThenByDescending(v => v.Division)
+                .ToList();
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "document-timeline");
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "document-timeline-header d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2");
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "d-flex flex-column");
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "document-name fw-semibold");
+            builder.AddContent(seq++, document.BaseName);
+            builder.CloseElement();
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "d-flex flex-column align-items-end gap-1");
+
+            if (document.LatestUploadedUtc is DateTime latest)
+            {
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", "small text-muted");
+                builder.AddContent(seq++, $"ล่าสุด: {FormatDate(latest)}");
+                builder.CloseElement();
+            }
+
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "badge bg-success text-white");
+            builder.AddContent(seq++, $"ทั้งหมด {versions.Count} เวอร์ชัน");
+            builder.CloseElement();
+
+            builder.CloseElement();
+
+            builder.CloseElement();
+
+            if (versions.Count > 0)
+            {
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "version-timeline");
+
+                for (var i = 0; i < versions.Count; i++)
+                {
+                    var version = versions[i];
+                    var versionClasses = "version-node";
+                    if (i == 0)
+                    {
+                        versionClasses += " latest";
+                    }
+
+                    builder.OpenElement(seq++, "div");
+                    builder.AddAttribute(seq++, "class", versionClasses);
+
+                    builder.OpenElement(seq++, "div");
+                    builder.AddAttribute(seq++, "class", "version-content");
+
+                    builder.OpenElement(seq++, "div");
+                    builder.AddAttribute(seq++, "class", "d-flex justify-content-between align-items-start flex-wrap gap-2");
+
+                    builder.OpenElement(seq++, "span");
+                    builder.AddAttribute(seq++, "class", "fw-semibold");
+                    builder.AddContent(seq++, $"Division {version.Division:D2}");
+                    builder.CloseElement();
+
+                    builder.OpenElement(seq++, "span");
+                    builder.AddAttribute(seq++, "class", "small text-muted");
+                    builder.AddContent(seq++, FormatDate(version.UploadedUtc));
+                    builder.CloseElement();
+
+                    builder.CloseElement();
+
+                    builder.OpenElement(seq++, "div");
+                    builder.AddAttribute(seq++, "class", "small text-muted");
+                    builder.AddContent(seq++, version.FileName);
+                    builder.CloseElement();
+
+                    if (!string.IsNullOrWhiteSpace(version.Comment))
+                    {
+                        builder.OpenElement(seq++, "div");
+                        builder.AddAttribute(seq++, "class", "version-comment");
+                        builder.AddContent(seq++, version.Comment);
+                        builder.CloseElement();
+                    }
+
+                    builder.CloseElement();
+                    builder.CloseElement();
                 }
 
                 builder.CloseElement();
@@ -416,6 +623,7 @@ else
         public DateTime? LastModifiedUtc { get; set; }
         public string Status { get; set; } = string.Empty;
         public List<FileEditStatusResponse> RecentFiles { get; set; } = new();
+        public List<DocumentTimelineResponse> Documents { get; set; } = new();
         public List<BranchEditStatusResponse> Children { get; set; } = new();
         public string? ErrorMessage { get; set; }
     }
@@ -425,6 +633,22 @@ else
         public string FileName { get; set; } = string.Empty;
         public DateTime LastModifiedUtc { get; set; }
         public long SizeBytes { get; set; }
+        public string RelativePath { get; set; } = string.Empty;
+    }
+
+    private sealed class DocumentTimelineResponse
+    {
+        public string BaseName { get; set; } = string.Empty;
+        public DateTime? LatestUploadedUtc { get; set; }
+        public List<VersionTimelineResponse> Versions { get; set; } = new();
+    }
+
+    private sealed class VersionTimelineResponse
+    {
+        public string FileName { get; set; } = string.Empty;
+        public int Division { get; set; }
+        public DateTime UploadedUtc { get; set; }
+        public string Comment { get; set; } = string.Empty;
         public string RelativePath { get; set; } = string.Empty;
     }
 }

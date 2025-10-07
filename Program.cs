@@ -70,8 +70,20 @@ internal sealed record FolderDocument(string BaseName, IReadOnlyList<PdfVersion>
 internal sealed record PdfVersion(string FileName, int Division, DateTime UploadedUtc, string Comment);
 internal sealed record CreateFolderRequest(string? Name);
 internal sealed record LineEditStatus(string Line, BranchEditStatus? Root, string? ErrorMessage);
-internal sealed record BranchEditStatus(string Name, IReadOnlyList<string> PathSegments, int PdfCount, int TotalPdfCount, DateTime? LastModifiedUtc, string Status, IReadOnlyList<FileEditStatus> RecentFiles, IReadOnlyList<BranchEditStatus> Children, string? ErrorMessage);
+internal sealed record BranchEditStatus(
+    string Name,
+    IReadOnlyList<string> PathSegments,
+    int PdfCount,
+    int TotalPdfCount,
+    DateTime? LastModifiedUtc,
+    string Status,
+    IReadOnlyList<FileEditStatus> RecentFiles,
+    IReadOnlyList<DocumentEditStatus> Documents,
+    IReadOnlyList<BranchEditStatus> Children,
+    string? ErrorMessage);
 internal sealed record FileEditStatus(string FileName, DateTime LastModifiedUtc, long SizeBytes, string RelativePath);
+internal sealed record DocumentEditStatus(string BaseName, DateTime? LatestUploadedUtc, IReadOnlyList<PdfVersionStatus> Versions);
+internal sealed record PdfVersionStatus(string FileName, int Division, DateTime UploadedUtc, string Comment, string RelativePath);
 internal sealed class PdfMetadata
 {
     public Dictionary<string, List<PdfVersionMetadata>> Documents { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -862,8 +874,43 @@ internal sealed class PdfBrowserService
                 LastModifiedUtc: null,
                 Status: "ไม่สามารถอ่านไฟล์ในกิ่งนี้ได้",
                 RecentFiles: Array.Empty<FileEditStatus>(),
+                Documents: Array.Empty<DocumentEditStatus>(),
                 Children: Array.Empty<BranchEditStatus>(),
                 ErrorMessage: $"ไม่สามารถอ่านไฟล์: {ex.Message}");
+        }
+
+        var metadata = LoadMetadata(directory.FullName);
+        var fileNames = pdfFiles.Select(file => file.Name).ToList();
+        var metadataChanged = PruneMetadata(metadata, fileNames);
+
+        var documentListings = BuildDocumentListing(directory.FullName, fileNames, metadata);
+        var documentStatuses = documentListings
+            .Select(doc =>
+            {
+                var versions = doc.Versions
+                    .OrderByDescending(v => v.UploadedUtc)
+                    .ThenByDescending(v => v.Division)
+                    .Select(v => new PdfVersionStatus(
+                        v.FileName,
+                        v.Division,
+                        v.UploadedUtc,
+                        v.Comment ?? string.Empty,
+                        BuildRelativeFilePath(segments, v.FileName)))
+                    .ToList();
+
+                DateTime? latest = versions.Count > 0
+                    ? versions[0].UploadedUtc
+                    : (DateTime?)null;
+
+                return new DocumentEditStatus(doc.BaseName, latest, versions);
+            })
+            .OrderByDescending(d => d.LatestUploadedUtc ?? DateTime.MinValue)
+            .ThenBy(d => d.BaseName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (metadataChanged)
+        {
+            TryPersistMetadata(directory.FullName, metadata);
         }
 
         var recentFiles = pdfFiles
@@ -920,6 +967,7 @@ internal sealed class PdfBrowserService
             lastModified,
             status,
             recentFiles,
+            documentStatuses,
             children,
             childEnumerationError);
     }
