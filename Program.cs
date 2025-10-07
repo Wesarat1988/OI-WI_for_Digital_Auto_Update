@@ -86,6 +86,17 @@ static bool IsValidFolderName(string folderName)
            && !trimmed.Contains(Path.AltDirectorySeparatorChar);
 }
 
+static IReadOnlyList<string> ParsePathSegments(string? rawPath)
+{
+    if (string.IsNullOrWhiteSpace(rawPath))
+    {
+        return Array.Empty<string>();
+    }
+
+    return rawPath
+        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+}
+
 bool TryResolveLine(string line, out string? linePath)
 {
     linePath = null;
@@ -104,20 +115,59 @@ bool TryResolveLine(string line, out string? linePath)
     return true;
 }
 
-IResult? TryResolvePdf(string line, string file, out string? filePath)
+bool TryResolveDirectory(string line, IReadOnlyList<string> segments, out string? directoryPath, out List<string>? normalizedSegments, out IResult? error)
 {
-    filePath = null;
+    directoryPath = null;
+    normalizedSegments = null;
+    error = null;
+
     if (!TryResolveLine(line, out var linePath))
     {
-        return Results.NotFound("Unknown folder");
+        error = Results.NotFound("Unknown folder");
+        return false;
     }
 
+    var currentDirectory = new DirectoryInfo(linePath!);
+    var collected = new List<string>();
+
+    foreach (var segment in segments)
+    {
+        if (!IsValidFolderName(segment))
+        {
+            error = Results.BadRequest("ชื่อโฟลเดอร์ไม่ถูกต้อง");
+            return false;
+        }
+
+        var nextPath = Path.Combine(currentDirectory.FullName, segment);
+        if (!Directory.Exists(nextPath))
+        {
+            error = Results.NotFound("ไม่พบโฟลเดอร์ที่ระบุ");
+            return false;
+        }
+
+        currentDirectory = new DirectoryInfo(nextPath);
+        collected.Add(currentDirectory.Name);
+    }
+
+    directoryPath = currentDirectory.FullName;
+    normalizedSegments = collected;
+    return true;
+}
+
+IResult? TryResolvePdf(string line, IReadOnlyList<string> pathSegments, string file, out string? filePath)
+{
+    filePath = null;
     if (!IsValidPdfFileName(file))
     {
         return Results.BadRequest("Invalid PDF file name");
     }
 
-    var candidate = Path.Combine(linePath!, file);
+    if (!TryResolveDirectory(line, pathSegments, out var directoryPath, out _, out var error))
+    {
+        return error;
+    }
+
+    var candidate = Path.Combine(directoryPath!, file);
     if (!System.IO.File.Exists(candidate))
     {
         return Results.NotFound();
@@ -147,23 +197,32 @@ app.MapGet("/api/folders", () =>
     }
 });
 
-app.MapGet("/api/folders/{line}", (string line) =>
+app.MapGet("/api/folders/{line}", (string line, HttpRequest request) =>
 {
-    if (!TryResolveLine(line, out var linePath))
+    var pathSegments = ParsePathSegments(request.Query["path"]);
+    if (!TryResolveDirectory(line, pathSegments, out var directoryPath, out var normalizedSegments, out var error))
     {
-        return Results.NotFound();
+        return error ?? Results.NotFound();
     }
 
     try
     {
-        var files = Directory.EnumerateFiles(linePath!, "*.pdf", SearchOption.TopDirectoryOnly)
+        var folders = Directory.EnumerateDirectories(directoryPath!, "*", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .Where(name => name is not null && IsValidFolderName(name))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => name!)
+            .ToList();
+
+        var files = Directory.EnumerateFiles(directoryPath!, "*.pdf", SearchOption.TopDirectoryOnly)
             .Where(path => IsValidPdfFileName(Path.GetFileName(path)))
             .Select(Path.GetFileName)
             .Where(name => name is not null)
-            .OrderBy(name => name)
-            .ToList()!;
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => name!)
+            .ToList();
 
-        return Results.Ok(files);
+        return Results.Ok(new FolderListing(line, normalizedSegments ?? new List<string>(), folders, files));
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
     {
@@ -172,9 +231,11 @@ app.MapGet("/api/folders/{line}", (string line) =>
     }
 });
 
-app.MapGet("/pdf/{line}/{file}", (string line, string file) =>
+app.MapGet("/pdf/{line}/{file}", (string line, string file, HttpRequest request) =>
 {
-    if (TryResolvePdf(line, file, out var filePath) is { } error)
+    var pathSegments = ParsePathSegments(request.Query["path"]);
+
+    if (TryResolvePdf(line, pathSegments, file, out var filePath) is { } error)
     {
         return error;
     }
@@ -193,9 +254,10 @@ app.MapGet("/pdf/{line}/{file}", (string line, string file) =>
 
 app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest request) =>
 {
-    if (!TryResolveLine(line, out var linePath))
+    var pathSegments = ParsePathSegments(request.Query["path"]);
+    if (!TryResolveDirectory(line, pathSegments, out var directoryPath, out _, out var pathError))
     {
-        return Results.NotFound("Unknown folder");
+        return pathError ?? Results.NotFound("Unknown folder");
     }
 
     if (!request.HasFormContentType)
@@ -224,7 +286,7 @@ app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest reques
             return Results.BadRequest($"ไฟล์มีขนาดเกิน {MaxUploadBytes / (1024 * 1024)} MB");
         }
 
-        var destination = Path.Combine(linePath!, originalName);
+        var destination = Path.Combine(directoryPath!, originalName);
         if (System.IO.File.Exists(destination))
         {
             return Results.Conflict("ไฟล์นี้มีอยู่แล้ว");
@@ -234,7 +296,7 @@ app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest reques
         await using var writeStream = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         await readStream.CopyToAsync(writeStream);
 
-        return Results.Ok(new { file = originalName });
+        return Results.Ok(new { file = originalName, path = pathSegments });
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
     {
@@ -245,9 +307,10 @@ app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest reques
 
 app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext context) =>
 {
-    if (!TryResolveLine(line, out var linePath))
+    var pathSegments = ParsePathSegments(context.Request.Query["path"]);
+    if (!TryResolveDirectory(line, pathSegments, out var directoryPath, out _, out var error))
     {
-        return Results.NotFound("Unknown folder");
+        return error ?? Results.NotFound("Unknown folder");
     }
 
     CreateFolderRequest? request;
@@ -272,7 +335,7 @@ app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext co
         return Results.BadRequest("ชื่อโฟลเดอร์ไม่ถูกต้อง");
     }
 
-    var targetPath = Path.Combine(linePath!, name);
+    var targetPath = Path.Combine(directoryPath!, name);
 
     if (Directory.Exists(targetPath))
     {
@@ -282,7 +345,7 @@ app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext co
     try
     {
         Directory.CreateDirectory(targetPath);
-        return Results.Ok(new { folder = name });
+        return Results.Ok(new { folder = name, path = pathSegments });
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
     {
@@ -297,4 +360,5 @@ app.MapRazorComponents<BlazorPdfApp.Components.App>()
 
 app.Run();
 
+internal sealed record FolderListing(string Line, IReadOnlyList<string> PathSegments, IReadOnlyList<string> Folders, IReadOnlyList<string> Files);
 internal sealed record CreateFolderRequest(string? Name);

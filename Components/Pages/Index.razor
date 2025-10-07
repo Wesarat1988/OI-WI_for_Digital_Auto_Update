@@ -3,6 +3,7 @@
 @using System.Net.Http.Json
 @using Microsoft.AspNetCore.Components.Forms
 @using System.Text.Json
+@using System.Linq
 @inject HttpClient Http
 @inject NavigationManager NavManager
 @rendermode InteractiveServer
@@ -61,8 +62,44 @@ else if (selectedLine is not null)
     }
     else
     {
+        <nav class="mb-3" aria-label="breadcrumb">
+            <ol class="breadcrumb mb-0">
+                <li class="breadcrumb-item @(currentPathSegments.Count == 0 ? "active" : null)"
+                    aria-current="@(currentPathSegments.Count == 0 ? "page" : null)">
+                    @if (currentPathSegments.Count == 0)
+                    {
+                        @selectedLine
+                    }
+                    else
+                    {
+                        <button class="btn btn-link p-0"
+                                type="button"
+                                @onclick="async () => await NavigateToRootAsync()">@selectedLine</button>
+                    }
+                </li>
+                @for (var i = 0; i < currentPathSegments.Count; i++)
+                {
+                    var folderName = currentPathSegments[i];
+                    var isLast = i == currentPathSegments.Count - 1;
+                    <li class="breadcrumb-item @(isLast ? "active" : null)"
+                        aria-current="@(isLast ? "page" : null)">
+                        @if (isLast)
+                        {
+                            @folderName
+                        }
+                        else
+                        {
+                            <button class="btn btn-link p-0"
+                                    type="button"
+                                    @onclick="async () => await NavigateToBreadcrumbAsync(i)">@folderName</button>
+                        }
+                    </li>
+                }
+            </ol>
+        </nav>
+
         <div class="card mb-4">
-            <div class="card-header">สร้างโฟลเดอร์สำหรับโมเดลใน @selectedLine</div>
+            <div class="card-header">สร้างโฟลเดอร์สำหรับโมเดลใน @GetCurrentPathDisplay()</div>
             <div class="card-body d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center">
                 <input class="form-control"
                        placeholder="ชื่อโฟลเดอร์ (เช่น Model A)"
@@ -84,7 +121,7 @@ else if (selectedLine is not null)
         </div>
 
         <div class="card mb-4">
-            <div class="card-header">เพิ่มไฟล์ PDF ลงใน @selectedLine</div>
+            <div class="card-header">เพิ่มไฟล์ PDF ลงใน @GetCurrentPathDisplay()</div>
             <div class="card-body d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center">
                 <InputFile OnChange="HandleFileSelected" accept=".pdf" disabled="@isUploadingFile" />
                 <div class="flex-grow-1">
@@ -111,6 +148,29 @@ else if (selectedLine is not null)
             }
         </div>
 
+        <div class="card mb-4">
+            <div class="card-header">โฟลเดอร์ภายใน @GetCurrentPathDisplay()</div>
+            <div class="list-group list-group-flush">
+                @if (currentFolders.Count == 0)
+                {
+                    <div class="list-group-item text-muted">ไม่มีโฟลเดอร์ย่อย</div>
+                }
+                else
+                {
+                    @foreach (var folder in currentFolders)
+                    {
+                        <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <div class="text-break fw-semibold">@folder</div>
+                            <button class="btn btn-sm btn-outline-primary"
+                                    type="button"
+                                    disabled="@isLoadingFiles"
+                                    @onclick="async () => await EnterFolderAsync(folder)">เปิด</button>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
         if (currentFiles.Count == 0)
         {
             <div class="alert alert-info" role="alert">โฟลเดอร์นี้ไม่มีไฟล์ PDF</div>
@@ -126,7 +186,9 @@ else if (selectedLine is not null)
                             <a class="btn btn-sm btn-outline-secondary"
                                href="@BuildPdfUrl(selectedLine!, file)"
                                target="_blank" rel="noopener noreferrer">เปิด</a>
-                            <button class="btn btn-sm btn-primary" @onclick="() => PreviewFile(file)">พรีวิว</button>
+                            <button class="btn btn-sm btn-primary"
+                                    type="button"
+                                    @onclick="() => PreviewFile(file)">พรีวิว</button>
                         </div>
                     </div>
                 }
@@ -163,6 +225,8 @@ else if (selectedLine is not null)
 
     private readonly HashSet<string> availableLines = new(StringComparer.OrdinalIgnoreCase);
     private List<string>? currentFiles;
+    private List<string> currentFolders = new();
+    private List<string> currentPathSegments = new();
     private string? selectedLine;
     private string? previewFile;
     private bool isLoadingLines;
@@ -227,33 +291,58 @@ else if (selectedLine is not null)
             return;
         }
 
-        if (string.Equals(selectedLine, line, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
         selectedLine = line;
         previewFile = null;
         currentFiles = null;
+        currentFolders = new List<string>();
+        currentPathSegments = new List<string>();
         ResetUploadState();
         ResetFolderCreationState();
-        await LoadFilesAsync(line);
+        filesError = null;
+        await LoadFilesAsync(line, Array.Empty<string>());
     }
 
-    private async Task LoadFilesAsync(string line)
+    private async Task LoadFilesAsync(string line, IReadOnlyList<string>? pathSegments = null)
     {
+        var targetSegments = pathSegments is null
+            ? new List<string>(currentPathSegments)
+            : new List<string>(pathSegments);
+
+        currentFiles = null;
         try
         {
             isLoadingFiles = true;
             filesError = null;
-            var filesEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(line)}");
-            currentFiles = await Http.GetFromJsonAsync<List<string>>(filesEndpoint);
-            currentFiles ??= new List<string>();
+            var query = BuildPathQuery(targetSegments);
+            var filesEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(line)}{query}");
+            var listing = await Http.GetFromJsonAsync<FolderListingResponse>(filesEndpoint);
+
+            if (listing is null)
+            {
+                currentFolders = new List<string>();
+                currentFiles = new List<string>();
+                currentPathSegments = targetSegments;
+                return;
+            }
+
+            currentFolders = listing.Folders is { } folders
+                ? new List<string>(folders)
+                : new List<string>();
+
+            currentFiles = listing.Files is { } files
+                ? new List<string>(files)
+                : new List<string>();
+
+            currentPathSegments = listing.PathSegments is { } pathList
+                ? new List<string>(pathList)
+                : new List<string>(targetSegments);
         }
         catch (Exception ex)
         {
             filesError = $"ไม่สามารถโหลดไฟล์ได้: {ex.Message}";
+            currentFolders = new List<string>();
             currentFiles = new List<string>();
+            currentPathSegments = targetSegments;
         }
         finally
         {
@@ -271,9 +360,74 @@ else if (selectedLine is not null)
         previewFile = null;
     }
 
-    private static string BuildPdfUrl(string line, string file)
+    private string BuildPdfUrl(string line, string file)
     {
-        return $"/pdf/{Uri.EscapeDataString(line)}/{Uri.EscapeDataString(file)}";
+        var baseUrl = $"/pdf/{Uri.EscapeDataString(line)}/{Uri.EscapeDataString(file)}";
+        var query = BuildPathQuery(currentPathSegments);
+        return string.IsNullOrEmpty(query) ? baseUrl : $"{baseUrl}{query}";
+    }
+
+    private string GetCurrentPathDisplay()
+    {
+        if (selectedLine is null)
+        {
+            return string.Empty;
+        }
+
+        return currentPathSegments.Count == 0
+            ? selectedLine
+            : $"{selectedLine}\\{string.Join('\\', currentPathSegments)}";
+    }
+
+    private async Task NavigateToRootAsync()
+    {
+        if (selectedLine is null)
+        {
+            return;
+        }
+
+        previewFile = null;
+        await LoadFilesAsync(selectedLine, Array.Empty<string>());
+    }
+
+    private async Task NavigateToBreadcrumbAsync(int depth)
+    {
+        if (selectedLine is null)
+        {
+            return;
+        }
+
+        if (depth < 0 || depth >= currentPathSegments.Count)
+        {
+            return;
+        }
+
+        previewFile = null;
+        var target = currentPathSegments.Take(depth + 1).ToList();
+        await LoadFilesAsync(selectedLine, target);
+    }
+
+    private async Task EnterFolderAsync(string folder)
+    {
+        if (selectedLine is null || string.IsNullOrWhiteSpace(folder))
+        {
+            return;
+        }
+
+        previewFile = null;
+        var target = new List<string>(currentPathSegments) { folder };
+        await LoadFilesAsync(selectedLine, target);
+    }
+
+    private static string BuildPathQuery(IReadOnlyList<string> segments)
+    {
+        if (segments.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var encoded = string.Join('/', segments.Select(Uri.EscapeDataString));
+        return $"?path={encoded}";
     }
 
     private void HandleFileSelected(InputFileChangeEventArgs e)
@@ -315,7 +469,7 @@ else if (selectedLine is not null)
 
         try
         {
-            var uploadEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(selectedLine)}/upload");
+            var uploadEndpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(selectedLine)}/upload{BuildPathQuery(currentPathSegments)}");
             using var content = new MultipartFormDataContent();
             var stream = pendingUpload.OpenReadStream(MaxUploadBytes);
             var streamContent = new StreamContent(stream);
@@ -329,7 +483,7 @@ else if (selectedLine is not null)
                 uploadSuccess = string.IsNullOrEmpty(uploadedName)
                     ? "อัปโหลดไฟล์เรียบร้อย"
                     : $"อัปโหลดไฟล์ {uploadedName} เรียบร้อย";
-                await LoadFilesAsync(selectedLine);
+                await LoadFilesAsync(selectedLine, currentPathSegments);
                 pendingUpload = null;
                 pendingFileName = null;
             }
@@ -380,13 +534,14 @@ else if (selectedLine is not null)
 
         try
         {
-            var endpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(selectedLine)}/subfolders");
+            var endpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(selectedLine)}/subfolders{BuildPathQuery(currentPathSegments)}");
             var response = await Http.PostAsJsonAsync(endpoint, new { name = desiredName });
 
             if (response.IsSuccessStatusCode)
             {
                 createFolderSuccess = $"สร้างโฟลเดอร์ {desiredName} เรียบร้อย";
                 newFolderName = string.Empty;
+                await LoadFilesAsync(selectedLine, currentPathSegments);
             }
             else
             {
@@ -409,6 +564,13 @@ else if (selectedLine is not null)
         createFolderError = null;
         createFolderSuccess = null;
         newFolderName = string.Empty;
+    }
+
+    private sealed class FolderListingResponse
+    {
+        public List<string> PathSegments { get; set; } = new();
+        public List<string> Folders { get; set; } = new();
+        public List<string> Files { get; set; } = new();
     }
 
     private static async Task<string> ExtractErrorMessageAsync(HttpResponseMessage response)
