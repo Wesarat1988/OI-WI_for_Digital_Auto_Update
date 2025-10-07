@@ -19,7 +19,153 @@
     </button>
 </div>
 
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <ul class="nav nav-tabs search-tabs mb-3" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button type="button"
+                        role="tab"
+                        class="@GetTabButtonClass(SearchTab.Folder)"
+                        @onclick="() => SetSearchTab(SearchTab.Folder)"
+                        aria-selected="@(activeTab == SearchTab.Folder)">
+                    ค้นหาโฟลเดอร์
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button type="button"
+                        role="tab"
+                        class="@GetTabButtonClass(SearchTab.Document)"
+                        @onclick="() => SetSearchTab(SearchTab.Document)"
+                        aria-selected="@(activeTab == SearchTab.Document)">
+                    ค้นหาเอกสาร
+                </button>
+            </li>
+        </ul>
+
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col-12 col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text">🔍</span>
+                    <input class="form-control"
+                           placeholder="พิมพ์เพื่อค้นหา..."
+                           @bind-value="searchTerm"
+                           @bind-value:event="oninput"
+                           aria-label="ค้นหา" />
+                </div>
+            </div>
+            <div class="col-12 col-md-6 text-md-end text-muted small">
+                @if (activeTab == SearchTab.Folder)
+                {
+                    <span>ผลลัพธ์ทั้งหมด: @GetFolderResultCount()</span>
+                }
+                else
+                {
+                    <span>ผลลัพธ์ทั้งหมด: @GetDocumentResultCount()</span>
+                }
+            </div>
+        </div>
+
+        <div class="search-results">
+            @if (string.IsNullOrWhiteSpace(searchTerm))
+            {
+                <div class="text-muted">พิมพ์คำค้นเพื่อค้นหาโฟลเดอร์หรือเอกสาร</div>
+            }
+            else if (activeTab == SearchTab.Folder)
+            {
+                var results = FilteredFolderResults.ToList();
+                if (results.Count == 0)
+                {
+                    <div class="text-muted">ไม่พบโฟลเดอร์ที่ตรงกับ "@searchTerm"</div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var result in results)
+                        {
+                            <div class="list-group-item d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+                                <div>
+                                    <div class="fw-semibold">@result.DisplayName</div>
+                                    <div class="small text-muted">@result.DisplayPath</div>
+                                </div>
+                                <div class="d-flex flex-wrap gap-2 text-muted small">
+                                    <span>ไฟล์ในกิ่ง: @result.PdfCount</span>
+                                    <span>ไฟล์รวม: @result.TotalPdfCount</span>
+                                    <span>อัปเดต: @FormatDate(result.LastModifiedUtc)</span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                var results = FilteredDocumentResults.ToList();
+                if (results.Count == 0)
+                {
+                    <div class="text-muted">ไม่พบเอกสารที่ตรงกับ "@searchTerm"</div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var result in results)
+                        {
+                            <div class="list-group-item d-flex flex-column gap-1">
+                                <div class="d-flex justify-content-between flex-wrap gap-2 align-items-start">
+                                    <div>
+                                        <div class="fw-semibold">@result.BaseName</div>
+                                        <div class="small text-muted">@result.DisplayPath</div>
+                                    </div>
+                                    <div class="text-muted small text-end">
+                                        <div>เวอร์ชันทั้งหมด: @result.VersionCount</div>
+                                        @if (result.LatestDivision.HasValue)
+                                        {
+                                            <div>เวอร์ชันล่าสุด: Division @result.LatestDivision.Value.ToString("D2")</div>
+                                        }
+                                        <div>อัปเดต: @FormatDate(result.LatestUploadedUtc)</div>
+                                    </div>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(result.LatestComment))
+                                {
+                                    <div class="badge bg-light text-dark align-self-start">หมายเหตุล่าสุด: @result.LatestComment</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
 <style>
+    .search-tabs .nav-item button {
+        border: none;
+        border-bottom: 2px solid transparent;
+        background: none;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+        color: var(--bs-secondary, #6c757d);
+        cursor: pointer;
+    }
+
+    .search-tabs .nav-item button.active {
+        color: var(--bs-primary, #0d6efd);
+        border-bottom: 2px solid var(--bs-primary, #0d6efd);
+    }
+
+    .search-results .list-group-item {
+        border-left: none;
+        border-right: none;
+    }
+
+    .search-results .list-group-item:first-child {
+        border-top: none;
+    }
+
+    .search-results .list-group-item:last-child {
+        border-bottom: none;
+    }
+
     .branch-tree {
         position: relative;
         padding-left: 0.5rem;
@@ -303,6 +449,10 @@ else
     private List<LineEditStatusResponse>? lineStatuses;
     private bool isLoading = true;
     private string? errorMessage;
+    private SearchTab activeTab = SearchTab.Folder;
+    private string searchTerm = string.Empty;
+    private readonly List<FolderSearchResult> folderIndex = new();
+    private readonly List<DocumentSearchResult> documentIndex = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -327,16 +477,157 @@ else
                 .OrderByDescending(l => l.Root?.LastModifiedUtc ?? DateTime.MinValue)
                 .ThenBy(l => l.Line, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
+            RebuildSearchIndexes();
         }
         catch (Exception ex)
         {
             errorMessage = $"ไม่สามารถโหลดสถานะแก้ไขได้: {ex.Message}";
             lineStatuses = null;
+            folderIndex.Clear();
+            documentIndex.Clear();
         }
         finally
         {
             isLoading = false;
             StateHasChanged();
+        }
+    }
+
+    private IEnumerable<FolderSearchResult> FilteredFolderResults
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm))
+            {
+                return folderIndex;
+            }
+
+            var term = searchTerm.Trim();
+            return folderIndex
+                .Where(f => MatchesSearch(f.DisplayName, term) || MatchesSearch(f.DisplayPath, term))
+                .OrderByDescending(f => f.LastModifiedUtc ?? DateTime.MinValue)
+                .ThenBy(f => f.DisplayPath, StringComparer.CurrentCultureIgnoreCase);
+        }
+    }
+
+    private IEnumerable<DocumentSearchResult> FilteredDocumentResults
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm))
+            {
+                return documentIndex;
+            }
+
+            var term = searchTerm.Trim();
+            return documentIndex
+                .Where(d => MatchesSearch(d.BaseName, term) || MatchesSearch(d.DisplayPath, term) || MatchesSearch(d.LatestComment, term))
+                .OrderByDescending(d => d.LatestUploadedUtc ?? DateTime.MinValue)
+                .ThenBy(d => d.DisplayPath, StringComparer.CurrentCultureIgnoreCase);
+        }
+    }
+
+    private void SetSearchTab(SearchTab tab) => activeTab = tab;
+
+    private string GetTabButtonClass(SearchTab tab)
+        => tab == activeTab ? "nav-link active" : "nav-link";
+
+    private int GetFolderResultCount()
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return folderIndex.Count;
+        }
+
+        var term = searchTerm.Trim();
+        return folderIndex.Count(f => MatchesSearch(f.DisplayName, term) || MatchesSearch(f.DisplayPath, term));
+    }
+
+    private int GetDocumentResultCount()
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return documentIndex.Count;
+        }
+
+        var term = searchTerm.Trim();
+        return documentIndex.Count(d => MatchesSearch(d.BaseName, term) || MatchesSearch(d.DisplayPath, term) || MatchesSearch(d.LatestComment, term));
+    }
+
+    private static bool MatchesSearch(string? value, string term)
+        => !string.IsNullOrWhiteSpace(value) && term.Length > 0 && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+
+    private void RebuildSearchIndexes()
+    {
+        folderIndex.Clear();
+        documentIndex.Clear();
+
+        if (lineStatuses is null)
+        {
+            return;
+        }
+
+        foreach (var line in lineStatuses)
+        {
+            if (line.Root is null)
+            {
+                continue;
+            }
+
+            IndexBranch(line.Line, line.Root, Array.Empty<string>());
+        }
+    }
+
+    private void IndexBranch(string line, BranchEditStatusResponse branch, IReadOnlyList<string> parentSegments)
+    {
+        var segments = parentSegments.ToList();
+        if (!string.IsNullOrWhiteSpace(branch.Name))
+        {
+            var isRoot = parentSegments.Count == 0 && string.Equals(branch.Name, line, StringComparison.OrdinalIgnoreCase);
+            if (!isRoot)
+            {
+                segments.Add(branch.Name);
+            }
+        }
+
+        var displaySegments = new List<string> { line };
+        displaySegments.AddRange(segments);
+        var displayPath = string.Join(" / ", displaySegments);
+        var displayName = segments.Count > 0 ? segments[^1] : line;
+
+        folderIndex.Add(new FolderSearchResult
+        {
+            Line = line,
+            DisplayName = displayName,
+            DisplayPath = displayPath,
+            PdfCount = branch.PdfCount,
+            TotalPdfCount = branch.TotalPdfCount,
+            LastModifiedUtc = branch.LastModifiedUtc
+        });
+
+        foreach (var document in branch.Documents ?? Enumerable.Empty<DocumentTimelineResponse>())
+        {
+            var latest = document.Versions
+                .OrderByDescending(v => v.UploadedUtc)
+                .ThenByDescending(v => v.Division)
+                .FirstOrDefault();
+
+            var baseName = document.BaseName ?? string.Empty;
+            documentIndex.Add(new DocumentSearchResult
+            {
+                Line = line,
+                BaseName = baseName,
+                DisplayPath = string.Join(" / ", displaySegments.Append(baseName)),
+                VersionCount = document.Versions.Count,
+                LatestUploadedUtc = latest?.UploadedUtc,
+                LatestDivision = latest?.Division,
+                LatestComment = latest?.Comment ?? string.Empty
+            });
+        }
+
+        foreach (var child in branch.Children)
+        {
+            IndexBranch(line, child, segments);
         }
     }
 
@@ -607,6 +898,12 @@ else
         => value.ToLocalTime().ToString("g");
 
 
+    private enum SearchTab
+    {
+        Folder,
+        Document
+    }
+
     private sealed class LineEditStatusResponse
     {
         public string Line { get; set; } = string.Empty;
@@ -650,5 +947,26 @@ else
         public DateTime UploadedUtc { get; set; }
         public string Comment { get; set; } = string.Empty;
         public string RelativePath { get; set; } = string.Empty;
+    }
+
+    private sealed class FolderSearchResult
+    {
+        public string Line { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string DisplayPath { get; set; } = string.Empty;
+        public int PdfCount { get; set; }
+        public int TotalPdfCount { get; set; }
+        public DateTime? LastModifiedUtc { get; set; }
+    }
+
+    private sealed class DocumentSearchResult
+    {
+        public string Line { get; set; } = string.Empty;
+        public string BaseName { get; set; } = string.Empty;
+        public string DisplayPath { get; set; } = string.Empty;
+        public int VersionCount { get; set; }
+        public DateTime? LatestUploadedUtc { get; set; }
+        public int? LatestDivision { get; set; }
+        public string LatestComment { get; set; } = string.Empty;
     }
 }
