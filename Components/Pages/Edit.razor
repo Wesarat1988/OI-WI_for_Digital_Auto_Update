@@ -507,7 +507,7 @@ else
                 .Select(f => new { Item = f, Rank = CalculateFolderMatchRank(f, term) })
                 .Where(entry => entry.Rank < int.MaxValue)
                 .OrderBy(entry => entry.Rank)
-                .ThenByDescending(entry => entry.Item.LastModifiedUtc ?? DateTime.MinValue)
+                .ThenBy(entry => entry.Item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .ThenBy(entry => entry.Item.DisplayPath, StringComparer.CurrentCultureIgnoreCase)
                 .Select(entry => entry.Item);
         }
@@ -527,7 +527,7 @@ else
                 .Select(d => new { Item = d, Rank = CalculateDocumentMatchRank(d, term) })
                 .Where(entry => entry.Rank < int.MaxValue)
                 .OrderBy(entry => entry.Rank)
-                .ThenByDescending(entry => entry.Item.LatestUploadedUtc ?? DateTime.MinValue)
+                .ThenBy(entry => entry.Item.BaseName, StringComparer.CurrentCultureIgnoreCase)
                 .ThenBy(entry => entry.Item.DisplayPath, StringComparer.CurrentCultureIgnoreCase)
                 .Select(entry => entry.Item);
         }
