@@ -177,6 +177,210 @@ IResult? TryResolvePdf(string line, IReadOnlyList<string> pathSegments, string f
     return null;
 }
 
+static string BuildRelativeFilePath(IReadOnlyList<string> segments, string fileName)
+{
+    if (segments.Count == 0)
+    {
+        return fileName;
+    }
+
+    return string.Join('/', segments) + "/" + fileName;
+}
+
+static string DescribeRelativeTime(DateTime timestampUtc)
+{
+    var now = DateTime.UtcNow;
+    var delta = now - timestampUtc;
+
+    if (delta < TimeSpan.Zero)
+    {
+        delta = TimeSpan.Zero;
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to enumerate folders under {PdfRoot}", pdfRoot);
+        return Results.Problem("ไม่สามารถอ่านรายการโฟลเดอร์ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
+    }
+});
+
+app.MapGet("/api/folders/{line}", (string line, HttpRequest request) =>
+{
+    var pathSegments = ParsePathSegments(request.Query["path"]);
+    if (!TryResolveDirectory(line, pathSegments, out var directoryPath, out var normalizedSegments, out var error))
+    {
+        return error ?? Results.NotFound();
+    }
+
+    try
+    {
+        var folders = Directory.EnumerateDirectories(directoryPath!, "*", SearchOption.TopDirectoryOnly)
+            .Select(Path.GetFileName)
+            .Where(name => name is not null && IsValidFolderName(name))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => name!)
+            .ToList();
+
+        var files = Directory.EnumerateFiles(directoryPath!, "*.pdf", SearchOption.TopDirectoryOnly)
+            .Where(path => IsValidPdfFileName(Path.GetFileName(path)))
+            .Select(Path.GetFileName)
+            .Where(name => name is not null)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => name!)
+            .ToList();
+
+    if (delta.TotalMinutes < 1)
+    {
+        return "เมื่อสักครู่";
+    }
+
+    if (delta.TotalHours < 1)
+    {
+        return $"ประมาณ {Math.Floor(delta.TotalMinutes)} นาทีที่แล้ว";
+    }
+
+    if (delta.TotalDays < 1)
+    {
+        return $"ประมาณ {Math.Floor(delta.TotalHours)} ชั่วโมงที่แล้ว";
+    }
+
+    if (delta.TotalDays < 7)
+    {
+        return $"ประมาณ {Math.Floor(delta.TotalDays)} วันที่แล้ว";
+    }
+
+    if (delta.TotalDays < 30)
+    {
+        return $"ประมาณ {Math.Floor(delta.TotalDays / 7)} สัปดาห์ที่แล้ว";
+    }
+
+    if (delta.TotalDays < 365)
+    {
+        return $"ประมาณ {Math.Floor(delta.TotalDays / 30)} เดือนที่แล้ว";
+    }
+
+    return $"ประมาณ {Math.Floor(delta.TotalDays / 365)} ปีที่แล้ว";
+}
+
+static string BuildBranchStatusMessage(DateTime? lastModifiedUtc, int totalPdfCount, int childCount)
+{
+    if (totalPdfCount == 0)
+    {
+        return childCount > 0
+            ? "ยังไม่มีไฟล์ PDF ในกิ่งนี้"
+            : "ยังไม่มีไฟล์ PDF";
+    }
+
+    if (lastModifiedUtc is null)
+    {
+        return "มีไฟล์ PDF แต่ไม่พบข้อมูลการอัปเดต";
+    }
+
+    return $"อัปเดตล่าสุด {DescribeRelativeTime(lastModifiedUtc.Value)}";
+}
+
+BranchEditStatus BuildBranchStatus(DirectoryInfo directory, IReadOnlyList<string> segments)
+{
+    List<FileInfo> pdfFiles;
+    try
+    {
+        pdfFiles = directory.EnumerateFiles("*.pdf", SearchOption.TopDirectoryOnly)
+            .Where(file => IsValidPdfFileName(file.Name))
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .ToList();
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        return new BranchEditStatus(
+            directory.Name,
+            segments.ToList(),
+            PdfCount: 0,
+            TotalPdfCount: 0,
+            LastModifiedUtc: null,
+            Status: "ไม่สามารถอ่านไฟล์ในกิ่งนี้ได้",
+            RecentFiles: Array.Empty<FileEditStatus>(),
+            Children: Array.Empty<BranchEditStatus>(),
+            ErrorMessage: $"ไม่สามารถอ่านไฟล์: {ex.Message}");
+    }
+
+    var recentFiles = pdfFiles
+        .Take(5)
+        .Select(file => new FileEditStatus(
+            file.Name,
+            file.LastWriteTimeUtc,
+            file.Length,
+            BuildRelativeFilePath(segments, file.Name)))
+        .ToList();
+
+    var children = new List<BranchEditStatus>();
+    string? childEnumerationError = null;
+
+    try
+    {
+        foreach (var childDirectory in directory.EnumerateDirectories("*", SearchOption.TopDirectoryOnly)
+                     .Where(dir => IsValidFolderName(dir.Name))
+                     .OrderBy(dir => dir.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var childSegments = new List<string>(segments) { childDirectory.Name };
+            children.Add(BuildBranchStatus(childDirectory, childSegments));
+        }
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        childEnumerationError = $"ไม่สามารถอ่านโฟลเดอร์ย่อย: {ex.Message}";
+    }
+
+    var pdfCount = pdfFiles.Count;
+    var totalPdfCount = pdfCount + children.Sum(child => child.TotalPdfCount);
+
+    DateTime? lastModified = pdfFiles.Count > 0
+        ? pdfFiles.Max(file => file.LastWriteTimeUtc)
+        : (DateTime?)null;
+
+    foreach (var child in children)
+    {
+        if (child.LastModifiedUtc is { } childLast && (lastModified is null || childLast > lastModified))
+        {
+            lastModified = childLast;
+        }
+    }
+
+    var status = !string.IsNullOrEmpty(childEnumerationError)
+        ? childEnumerationError!
+        : BuildBranchStatusMessage(lastModified, totalPdfCount, children.Count);
+
+    return new BranchEditStatus(
+        directory.Name,
+        segments.ToList(),
+        pdfCount,
+        totalPdfCount,
+        lastModified,
+        status,
+        recentFiles,
+        children,
+        childEnumerationError);
+}
+
+LineEditStatus BuildLineEditStatus(string line, string pdfRootPath)
+{
+    var lineDirectory = Path.Combine(pdfRootPath, line);
+
+    if (!Directory.Exists(lineDirectory))
+    {
+        return new LineEditStatus(line, null, "ไม่พบโฟลเดอร์สำหรับไลน์นี้บนเซิร์ฟเวอร์");
+    }
+
+    try
+    {
+        var directoryInfo = new DirectoryInfo(lineDirectory);
+        var rootBranch = BuildBranchStatus(directoryInfo, Array.Empty<string>());
+        return new LineEditStatus(line, rootBranch, null);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        return new LineEditStatus(line, null, $"ไม่สามารถอ่านข้อมูลได้: {ex.Message}");
+    }
+}
+
 app.MapGet("/api/folders", () =>
 {
     try
@@ -250,6 +454,16 @@ app.MapGet("/pdf/{line}/{file}", (string line, string file, HttpRequest request)
         app.Logger.LogError(ex, "Failed to open PDF {File} for line {Line}", file, line);
         return Results.Problem("ไม่สามารถเปิดไฟล์ PDF ได้ กรุณาตรวจสอบการแชร์และสิทธิ์การเข้าถึง");
     }
+});
+
+app.MapGet("/api/edit-status", () =>
+{
+    var statuses = allowedLines
+        .OrderBy(line => line, StringComparer.OrdinalIgnoreCase)
+        .Select(line => BuildLineEditStatus(line, pdfRoot))
+        .ToList();
+
+    return Results.Ok(statuses);
 });
 
 app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest request) =>
@@ -362,3 +576,6 @@ app.Run();
 
 internal sealed record FolderListing(string Line, IReadOnlyList<string> PathSegments, IReadOnlyList<string> Folders, IReadOnlyList<string> Files);
 internal sealed record CreateFolderRequest(string? Name);
+internal sealed record LineEditStatus(string Line, BranchEditStatus? Root, string? ErrorMessage);
+internal sealed record BranchEditStatus(string Name, IReadOnlyList<string> PathSegments, int PdfCount, int TotalPdfCount, DateTime? LastModifiedUtc, string Status, IReadOnlyList<FileEditStatus> RecentFiles, IReadOnlyList<BranchEditStatus> Children, string? ErrorMessage);
+internal sealed record FileEditStatus(string FileName, DateTime LastModifiedUtc, long SizeBytes, string RelativePath);
