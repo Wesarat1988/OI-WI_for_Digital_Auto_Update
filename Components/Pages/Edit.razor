@@ -1,0 +1,232 @@
+@page "/edit"
+@using System.Net.Http.Json
+@inject HttpClient Http
+@inject NavigationManager NavManager
+
+<PageTitle>สถานะแก้ไขเอกสาร</PageTitle>
+
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center align-items-start gap-2 mb-4">
+    <h1 class="mb-0">สถานะแก้ไขเอกสาร</h1>
+    <button class="btn btn-outline-secondary" @onclick="RefreshAsync" disabled="@isLoading">
+        @if (isLoading)
+        {
+            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+        }
+        <span>รีเฟรช</span>
+    </button>
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger" role="alert">@errorMessage</div>
+}
+else if (isLoading)
+{
+    <div class="text-muted">กำลังโหลดสถานะการแก้ไข...</div>
+}
+else if (lineStatuses is null || lineStatuses.Count == 0)
+{
+    <div class="alert alert-info" role="alert">ยังไม่มีข้อมูลสถานะการแก้ไข</div>
+}
+else
+{
+    foreach (var line in lineStatuses)
+    {
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="fs-5 fw-semibold">@line.Line</div>
+                @if (!string.IsNullOrEmpty(line.ErrorMessage))
+                {
+                    <span class="badge bg-danger">ไม่สามารถอ่านข้อมูล</span>
+                }
+                else if (line.Root is not null)
+                {
+                    <span class="badge bg-primary">@line.Root.Status</span>
+                }
+            </div>
+            <div class="card-body">
+                @if (!string.IsNullOrEmpty(line.ErrorMessage))
+                {
+                    <div class="alert alert-danger mb-0">@line.ErrorMessage</div>
+                }
+                else if (line.Root is null)
+                {
+                    <div class="text-muted">ไม่มีข้อมูลสถานะสำหรับโฟลเดอร์นี้</div>
+                }
+                else
+                {
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-4">
+                            <div class="text-muted text-uppercase small">จำนวนไฟล์ทั้งหมด</div>
+                            <div class="fw-semibold">@line.Root.TotalPdfCount</div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <div class="text-muted text-uppercase small">อัปเดตล่าสุด</div>
+                            <div class="fw-semibold">
+                                @(line.Root.LastModifiedUtc is DateTime last
+                                    ? last.ToLocalTime().ToString("g")
+                                    : "-")
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <div class="text-muted text-uppercase small">สถานะ</div>
+                            <div class="fw-semibold">@line.Root.Status</div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th scope="col">กิ่ง / โฟลเดอร์</th>
+                                    <th scope="col" class="text-center">ไฟล์ในกิ่ง</th>
+                                    <th scope="col" class="text-center">ไฟล์รวม</th>
+                                    <th scope="col">อัปเดตล่าสุด</th>
+                                    <th scope="col">สถานะ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in EnumerateBranchTree(line.Root))
+                                {
+                                    var branch = entry.Branch;
+                                    <tr>
+                                        <td style="@GetIndentStyle(entry.Depth)">
+                                            <div class="fw-semibold">@branch.Name</div>
+                                            @if (branch.PathSegments.Count > 0)
+                                            {
+                                                <div class="small text-muted">@string.Join("/", branch.PathSegments)</div>
+                                            }
+                                            @if (!string.IsNullOrEmpty(branch.ErrorMessage))
+                                            {
+                                                <div class="small text-danger">@branch.ErrorMessage</div>
+                                            }
+                                            else if (branch.RecentFiles.Count > 0)
+                                            {
+                                                <div class="small text-muted">
+                                                    ล่าสุด:
+                                                    @for (var i = 0; i < branch.RecentFiles.Count; i++)
+                                                    {
+                                                        var file = branch.RecentFiles[i];
+                                                        <span>@file.FileName (@file.LastModifiedUtc.ToLocalTime().ToString("g"))</span>
+                                                        @if (i < branch.RecentFiles.Count - 1)
+                                                        {
+                                                            <span>, </span>
+                                                        }
+                                                    }
+                                                </div>
+                                            }
+                                        </td>
+                                        <td class="text-center">@branch.PdfCount</td>
+                                        <td class="text-center">@branch.TotalPdfCount</td>
+                                        <td>
+                                            @(branch.LastModifiedUtc is DateTime branchLast
+                                                ? branchLast.ToLocalTime().ToString("g")
+                                                : "-")
+                                        </td>
+                                        <td>
+                                            @if (!string.IsNullOrEmpty(branch.ErrorMessage))
+                                            {
+                                                <span class="text-danger">@branch.ErrorMessage</span>
+                                            }
+                                            else
+                                            {
+                                                @branch.Status
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<LineEditStatusResponse>? lineStatuses;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadStatusesAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        await LoadStatusesAsync();
+    }
+
+    private async Task LoadStatusesAsync()
+    {
+        try
+        {
+            isLoading = true;
+            errorMessage = null;
+
+            var endpoint = NavManager.ToAbsoluteUri("/api/edit-status");
+            var result = await Http.GetFromJsonAsync<List<LineEditStatusResponse>>(endpoint);
+            lineStatuses = result ?? new List<LineEditStatusResponse>();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"ไม่สามารถโหลดสถานะแก้ไขได้: {ex.Message}";
+            lineStatuses = null;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string GetIndentStyle(int depth)
+        => depth <= 0 ? string.Empty : $"padding-left: {Math.Min(depth * 1.5, 6)}rem;";
+
+    private static IEnumerable<(BranchEditStatusResponse Branch, int Depth)> EnumerateBranchTree(BranchEditStatusResponse root)
+    {
+        var stack = new Stack<(BranchEditStatusResponse Branch, int Depth)>();
+        stack.Push((root, 0));
+
+        while (stack.Count > 0)
+        {
+            var (branch, depth) = stack.Pop();
+            yield return (branch, depth);
+
+            for (var i = branch.Children.Count - 1; i >= 0; i--)
+            {
+                stack.Push((branch.Children[i], depth + 1));
+            }
+        }
+    }
+
+    private sealed class LineEditStatusResponse
+    {
+        public string Line { get; set; } = string.Empty;
+        public BranchEditStatusResponse? Root { get; set; }
+        public string? ErrorMessage { get; set; }
+    }
+
+    private sealed class BranchEditStatusResponse
+    {
+        public string Name { get; set; } = string.Empty;
+        public List<string> PathSegments { get; set; } = new();
+        public int PdfCount { get; set; }
+        public int TotalPdfCount { get; set; }
+        public DateTime? LastModifiedUtc { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public List<FileEditStatusResponse> RecentFiles { get; set; } = new();
+        public List<BranchEditStatusResponse> Children { get; set; } = new();
+        public string? ErrorMessage { get; set; }
+    }
+
+    private sealed class FileEditStatusResponse
+    {
+        public string FileName { get; set; } = string.Empty;
+        public DateTime LastModifiedUtc { get; set; }
+        public long SizeBytes { get; set; }
+        public string RelativePath { get; set; } = string.Empty;
+    }
+}
