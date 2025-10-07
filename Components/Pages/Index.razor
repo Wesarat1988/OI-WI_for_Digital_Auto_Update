@@ -1,4 +1,5 @@
 @page "/"
+@using System.Net.Http
 @using System.Net.Http.Json
 @using Microsoft.AspNetCore.Components.Forms
 @using System.Text.Json
@@ -60,6 +61,28 @@ else if (selectedLine is not null)
     }
     else
     {
+        <div class="card mb-4">
+            <div class="card-header">สร้างโฟลเดอร์สำหรับโมเดลใน @selectedLine</div>
+            <div class="card-body d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center">
+                <input class="form-control"
+                       placeholder="ชื่อโฟลเดอร์ (เช่น Model A)"
+                       @bind="newFolderName"
+                       @bind:event="oninput"
+                       disabled="@isCreatingFolder" />
+                <button class="btn btn-outline-primary"
+                        disabled="@(!CanCreateFolder)"
+                        @onclick="CreateFolderAsync">เพิ่มโฟลเดอร์</button>
+            </div>
+            @if (!string.IsNullOrEmpty(createFolderError))
+            {
+                <div class="card-footer text-danger">@createFolderError</div>
+            }
+            else if (!string.IsNullOrEmpty(createFolderSuccess))
+            {
+                <div class="card-footer text-success">@createFolderSuccess</div>
+            }
+        </div>
+
         <div class="card mb-4">
             <div class="card-header">เพิ่มไฟล์ PDF ลงใน @selectedLine</div>
             <div class="card-body d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center">
@@ -145,12 +168,16 @@ else if (selectedLine is not null)
     private bool isLoadingLines;
     private bool isLoadingFiles;
     private bool isUploadingFile;
+    private bool isCreatingFolder;
     private string? linesError;
     private string? filesError;
     private string? uploadError;
     private string? uploadSuccess;
+    private string? createFolderError;
+    private string? createFolderSuccess;
     private IBrowserFile? pendingUpload;
     private string? pendingFileName;
+    private string? newFolderName = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -209,6 +236,7 @@ else if (selectedLine is not null)
         previewFile = null;
         currentFiles = null;
         ResetUploadState();
+        ResetFolderCreationState();
         await LoadFilesAsync(line);
     }
 
@@ -307,31 +335,7 @@ else if (selectedLine is not null)
             }
             else
             {
-                var message = await response.Content.ReadAsStringAsync();
-                var mediaType = response.Content.Headers.ContentType?.MediaType;
-                if (string.Equals(mediaType, "application/problem+json", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(message);
-                        if (doc.RootElement.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
-                        {
-                            message = detail.GetString() ?? message;
-                        }
-                        else if (doc.RootElement.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
-                        {
-                            message = title.GetString() ?? message;
-                        }
-                    }
-                    catch (JsonException)
-                    {
-                        // ignore parsing failures and fall back to raw message
-                    }
-                }
-
-                uploadError = string.IsNullOrWhiteSpace(message)
-                    ? $"อัปโหลดไม่สำเร็จ (รหัส {response.StatusCode})"
-                    : message;
+                uploadError = await ExtractErrorMessageAsync(response);
             }
         }
         catch (Exception ex)
@@ -351,5 +355,101 @@ else if (selectedLine is not null)
         uploadSuccess = null;
         pendingUpload = null;
         pendingFileName = null;
+    }
+
+    private bool CanCreateFolder => selectedLine is not null && !string.IsNullOrWhiteSpace(newFolderName) && !isCreatingFolder;
+
+    private async Task CreateFolderAsync()
+    {
+        if (selectedLine is null)
+        {
+            return;
+        }
+
+        var desiredName = newFolderName?.Trim();
+        if (string.IsNullOrWhiteSpace(desiredName))
+        {
+            createFolderError = "กรุณากรอกชื่อโฟลเดอร์";
+            createFolderSuccess = null;
+            return;
+        }
+
+        isCreatingFolder = true;
+        createFolderError = null;
+        createFolderSuccess = null;
+
+        try
+        {
+            var endpoint = NavManager.ToAbsoluteUri($"/api/folders/{Uri.EscapeDataString(selectedLine)}/subfolders");
+            var response = await Http.PostAsJsonAsync(endpoint, new { name = desiredName });
+
+            if (response.IsSuccessStatusCode)
+            {
+                createFolderSuccess = $"สร้างโฟลเดอร์ {desiredName} เรียบร้อย";
+                newFolderName = string.Empty;
+            }
+            else
+            {
+                createFolderError = await ExtractErrorMessageAsync(response);
+            }
+        }
+        catch (Exception ex)
+        {
+            createFolderError = $"ไม่สามารถสร้างโฟลเดอร์ได้: {ex.Message}";
+        }
+        finally
+        {
+            isCreatingFolder = false;
+        }
+    }
+
+    private void ResetFolderCreationState()
+    {
+        isCreatingFolder = false;
+        createFolderError = null;
+        createFolderSuccess = null;
+        newFolderName = string.Empty;
+    }
+
+    private static async Task<string> ExtractErrorMessageAsync(HttpResponseMessage response)
+    {
+        var message = await response.Content.ReadAsStringAsync();
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+
+        if (string.Equals(mediaType, "application/problem+json", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(message);
+                if (doc.RootElement.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+                {
+                    var detailValue = detail.GetString();
+                    if (!string.IsNullOrWhiteSpace(detailValue))
+                    {
+                        return detailValue!;
+                    }
+                }
+
+                if (doc.RootElement.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
+                {
+                    var titleValue = title.GetString();
+                    if (!string.IsNullOrWhiteSpace(titleValue))
+                    {
+                        return titleValue!;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // ignore parsing failures and fall back to the raw message
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            message = $"คำขอไม่สำเร็จ (รหัส {response.StatusCode})";
+        }
+
+        return message;
     }
 }

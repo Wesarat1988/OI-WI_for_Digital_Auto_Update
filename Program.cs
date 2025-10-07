@@ -63,6 +63,29 @@ static bool IsValidPdfFileName(string fileName)
     return fileName.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
 }
 
+static bool IsValidFolderName(string folderName)
+{
+    if (string.IsNullOrWhiteSpace(folderName))
+    {
+        return false;
+    }
+
+    var trimmed = folderName.Trim();
+    if (trimmed.Length > 100)
+    {
+        return false;
+    }
+
+    if (string.Equals(trimmed, ".", StringComparison.Ordinal) || string.Equals(trimmed, "..", StringComparison.Ordinal))
+    {
+        return false;
+    }
+
+    return trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+           && !trimmed.Contains(Path.DirectorySeparatorChar)
+           && !trimmed.Contains(Path.AltDirectorySeparatorChar);
+}
+
 bool TryResolveLine(string line, out string? linePath)
 {
     linePath = null;
@@ -219,9 +242,59 @@ app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest reques
         return Results.Problem("ไม่สามารถอัปโหลดไฟล์ได้ กรุณาตรวจสอบสิทธิ์การเข้าถึง");
     }
 });
+
+app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext context) =>
+{
+    if (!TryResolveLine(line, out var linePath))
+    {
+        return Results.NotFound("Unknown folder");
+    }
+
+    CreateFolderRequest? request;
+    try
+    {
+        request = await context.Request.ReadFromJsonAsync<CreateFolderRequest>();
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
+    {
+        app.Logger.LogWarning(ex, "Invalid folder creation payload for line {Line}", line);
+        return Results.BadRequest("รูปแบบคำขอไม่ถูกต้อง");
+    }
+
+    var name = request?.Name?.Trim();
+    if (string.IsNullOrWhiteSpace(name))
+    {
+        return Results.BadRequest("กรุณาระบุชื่อโฟลเดอร์");
+    }
+
+    if (!IsValidFolderName(name))
+    {
+        return Results.BadRequest("ชื่อโฟลเดอร์ไม่ถูกต้อง");
+    }
+
+    var targetPath = Path.Combine(linePath!, name);
+
+    if (Directory.Exists(targetPath))
+    {
+        return Results.Conflict("มีโฟลเดอร์ชื่อนี้อยู่แล้ว");
+    }
+
+    try
+    {
+        Directory.CreateDirectory(targetPath);
+        return Results.Ok(new { folder = name });
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        app.Logger.LogError(ex, "Failed to create subfolder {Folder} for line {Line}", name, line);
+        return Results.Problem("ไม่สามารถสร้างโฟลเดอร์ได้ กรุณาตรวจสอบสิทธิ์การเข้าถึง");
+    }
+});
 // ====== /PDF browser configuration ======
 
 app.MapRazorComponents<BlazorPdfApp.Components.App>()
    .AddInteractiveServerRenderMode();
 
 app.Run();
+
+internal sealed record CreateFolderRequest(string? Name);
