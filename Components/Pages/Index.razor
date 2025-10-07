@@ -56,7 +56,7 @@ else if (isLoadingFiles)
 }
 else if (selectedLine is not null)
 {
-    if (currentFiles is null)
+    if (currentDocuments is null)
     {
         <div class="text-muted">เลือกโฟลเดอร์เพื่อดูไฟล์ PDF</div>
     }
@@ -122,21 +122,36 @@ else if (selectedLine is not null)
 
         <div class="card mb-4">
             <div class="card-header">เพิ่มไฟล์ PDF ลงใน @GetCurrentPathDisplay()</div>
-            <div class="card-body d-flex flex-column flex-md-row gap-2 align-items-start align-items-md-center">
-                <InputFile OnChange="HandleFileSelected" accept=".pdf" disabled="@isUploadingFile" />
-                <div class="flex-grow-1">
-                    @if (!string.IsNullOrEmpty(pendingFileName))
-                    {
-                        <div class="text-muted small">ไฟล์ที่เลือก: @pendingFileName</div>
-                    }
-                    else
-                    {
-                        <div class="text-muted small">เลือกไฟล์ PDF เพื่ออัปโหลด</div>
-                    }
+            <div class="card-body">
+                <div class="row g-2 align-items-center">
+                    <div class="col-12 col-md-auto">
+                        <InputFile OnChange="HandleFileSelected" accept=".pdf" disabled="@isUploadingFile" />
+                    </div>
+                    <div class="col">
+                        @if (!string.IsNullOrEmpty(pendingFileName))
+                        {
+                            <div class="text-muted small">ไฟล์ที่เลือก: @pendingFileName</div>
+                        }
+                        else
+                        {
+                            <div class="text-muted small">เลือกไฟล์ PDF เพื่ออัปโหลด</div>
+                        }
+                    </div>
+                    <div class="col-12 col-md-auto d-flex">
+                        <button class="btn btn-success w-100"
+                                disabled="@(!CanUpload)"
+                                @onclick="UploadSelectedFile">เพิ่มไฟล์</button>
+                    </div>
                 </div>
-                <button class="btn btn-success"
-                        disabled="@(!CanUpload)"
-                        @onclick="UploadSelectedFile">เพิ่มไฟล์</button>
+                <div class="mt-3">
+                    <textarea class="form-control"
+                              rows="2"
+                              placeholder="บันทึกสิ่งที่อัปเดตหรือข้อมูลเพิ่มเติม"
+                              @bind="uploadComment"
+                              @bind:event="oninput"
+                              disabled="@isUploadingFile"></textarea>
+                    <div class="form-text">ต้องกรอกคอมเมนต์ทุกครั้งที่อัปโหลดไฟล์ใหม่</div>
+                </div>
             </div>
             @if (!string.IsNullOrEmpty(uploadError))
             {
@@ -171,24 +186,59 @@ else if (selectedLine is not null)
             </div>
         </div>
 
-        if (currentFiles.Count == 0)
+        if (currentDocuments.Count == 0)
         {
             <div class="alert alert-info" role="alert">โฟลเดอร์นี้ไม่มีไฟล์ PDF</div>
         }
         else
         {
             <div class="list-group mb-4">
-                @foreach (var file in currentFiles)
+                @foreach (var document in currentDocuments)
                 {
-                    <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <div class="text-break">@file</div>
-                        <div class="d-flex gap-2">
-                            <a class="btn btn-sm btn-outline-secondary"
-                               href="@BuildPdfUrl(selectedLine!, file)"
-                               target="_blank" rel="noopener noreferrer">เปิด</a>
-                            <button class="btn btn-sm btn-primary"
-                                    type="button"
-                                    @onclick="() => PreviewFile(file)">พรีวิว</button>
+                    @{ var selectedVersion = GetSelectedVersion(document); }
+                    <div class="list-group-item">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+                            <div class="flex-grow-1">
+                                <div class="fw-semibold">@document.BaseName</div>
+                                @if (selectedVersion is not null)
+                                {
+                                    <div class="small text-muted">
+                                        Division @selectedVersion.Division.ToString("D2") • @selectedVersion.UploadedUtc.ToLocalTime().ToString("g")
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(selectedVersion.Comment))
+                                    {
+                                        <div class="small text-muted">หมายเหตุ: @selectedVersion.Comment</div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="small text-muted">ยังไม่มีเวอร์ชันที่อัปโหลด</div>
+                                }
+                            </div>
+                            <div class="d-flex flex-column flex-md-row align-items-stretch align-items-md-center gap-2">
+                                <select class="form-select form-select-sm"
+                                        disabled="@(document.Versions.Count == 0)"
+                                        value="@(selectedVersion?.FileName)"
+                                        @onchange="e => ChangeSelectedVersion(document, e.Value?.ToString())">
+                                    @foreach (var version in document.Versions)
+                                    {
+                                        <option value="@version.FileName">@FormatVersionLabel(version)</option>
+                                    }
+                                </select>
+                                <a class="btn btn-sm btn-outline-secondary @(selectedVersion is null ? "disabled" : string.Empty)"
+                                   href="@(selectedVersion is not null ? BuildPdfUrl(selectedLine!, selectedVersion.FileName) : "#")"
+                                   target="_blank"
+                                   rel="noopener noreferrer"
+                                   tabindex="@(selectedVersion is null ? -1 : 0)">
+                                    เปิด
+                                </a>
+                                <button class="btn btn-sm btn-primary"
+                                        type="button"
+                                        disabled="@(selectedVersion is null)"
+                                        @onclick="() => PreviewDocument(document)">
+                                    พรีวิว
+                                </button>
+                            </div>
                         </div>
                     </div>
                 }
@@ -197,22 +247,31 @@ else if (selectedLine is not null)
     }
 }
 
-@if (!string.IsNullOrEmpty(previewFile) && selectedLine is not null)
+@if (previewVersion is not null && previewBaseName is not null && selectedLine is not null)
 {
     <div class="card shadow-sm">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <div>
-                <strong>Preview:</strong> @previewFile
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2">
+                <strong>Preview:</strong>
+                <span>@previewBaseName</span>
+                <span class="badge bg-primary">Division @previewVersion.Division.ToString("D2")</span>
             </div>
             <div class="d-flex gap-2">
                 <a class="btn btn-sm btn-outline-secondary"
-                   href="@BuildPdfUrl(selectedLine!, previewFile!)"
+                   href="@BuildPdfUrl(selectedLine!, previewVersion.FileName)"
                    target="_blank" rel="noopener noreferrer">เปิดในแท็บใหม่</a>
                 <button class="btn btn-sm btn-outline-danger" @onclick="ClosePreview">ปิดพรีวิว</button>
             </div>
         </div>
         <div class="card-body p-0">
-            <iframe src="@BuildPdfUrl(selectedLine!, previewFile!)"
+            <div class="px-3 py-2 border-bottom bg-light">
+                <div class="small text-muted">อัปโหลด: @previewVersion.UploadedUtc.ToLocalTime().ToString("g")</div>
+                @if (!string.IsNullOrWhiteSpace(previewVersion.Comment))
+                {
+                    <div class="small">หมายเหตุ: @previewVersion.Comment</div>
+                }
+            </div>
+            <iframe src="@BuildPdfUrl(selectedLine!, previewVersion.FileName)"
                     style="width:100%; height:70vh; border:0;"
                     title="PDF Preview"></iframe>
         </div>
@@ -224,11 +283,13 @@ else if (selectedLine is not null)
     private const long MaxUploadBytes = 50L * 1024 * 1024;
 
     private readonly HashSet<string> availableLines = new(StringComparer.OrdinalIgnoreCase);
-    private List<string>? currentFiles;
+    private readonly Dictionary<string, VersionResponse> selectedDocumentVersions = new(StringComparer.OrdinalIgnoreCase);
+    private List<DocumentResponse>? currentDocuments;
     private List<string> currentFolders = new();
     private List<string> currentPathSegments = new();
     private string? selectedLine;
-    private string? previewFile;
+    private string? previewBaseName;
+    private VersionResponse? previewVersion;
     private bool isLoadingLines;
     private bool isLoadingFiles;
     private bool isUploadingFile;
@@ -242,6 +303,7 @@ else if (selectedLine is not null)
     private IBrowserFile? pendingUpload;
     private string? pendingFileName;
     private string? newFolderName = string.Empty;
+    private string uploadComment = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -292,10 +354,12 @@ else if (selectedLine is not null)
         }
 
         selectedLine = line;
-        previewFile = null;
-        currentFiles = null;
+        previewBaseName = null;
+        previewVersion = null;
+        currentDocuments = null;
         currentFolders = new List<string>();
         currentPathSegments = new List<string>();
+        selectedDocumentVersions.Clear();
         ResetUploadState();
         ResetFolderCreationState();
         filesError = null;
@@ -308,7 +372,7 @@ else if (selectedLine is not null)
             ? new List<string>(currentPathSegments)
             : new List<string>(pathSegments);
 
-        currentFiles = null;
+        currentDocuments = null;
         try
         {
             isLoadingFiles = true;
@@ -320,8 +384,9 @@ else if (selectedLine is not null)
             if (listing is null)
             {
                 currentFolders = new List<string>();
-                currentFiles = new List<string>();
+                currentDocuments = new List<DocumentResponse>();
                 currentPathSegments = targetSegments;
+                selectedDocumentVersions.Clear();
                 return;
             }
 
@@ -329,20 +394,41 @@ else if (selectedLine is not null)
                 ? new List<string>(folders)
                 : new List<string>();
 
-            currentFiles = listing.Files is { } files
-                ? new List<string>(files)
-                : new List<string>();
+            currentDocuments = listing.Documents is { } documents
+                ? new List<DocumentResponse>(documents)
+                : new List<DocumentResponse>();
 
             currentPathSegments = listing.PathSegments is { } pathList
                 ? new List<string>(pathList)
                 : new List<string>(targetSegments);
+
+            selectedDocumentVersions.Clear();
+
+            foreach (var document in currentDocuments)
+            {
+                document.Versions ??= new List<VersionResponse>();
+                var defaultVersion = document.Versions
+                    .OrderByDescending(v => v.Division)
+                    .ThenByDescending(v => v.UploadedUtc)
+                    .FirstOrDefault();
+
+                if (defaultVersion is not null)
+                {
+                    selectedDocumentVersions[document.BaseName] = defaultVersion;
+                }
+            }
+
+            SyncPreviewAfterReload();
         }
         catch (Exception ex)
         {
             filesError = $"ไม่สามารถโหลดไฟล์ได้: {ex.Message}";
             currentFolders = new List<string>();
-            currentFiles = new List<string>();
+            currentDocuments = new List<DocumentResponse>();
             currentPathSegments = targetSegments;
+            selectedDocumentVersions.Clear();
+            previewBaseName = null;
+            previewVersion = null;
         }
         finally
         {
@@ -350,14 +436,82 @@ else if (selectedLine is not null)
         }
     }
 
-    private void PreviewFile(string file)
+    private VersionResponse? GetSelectedVersion(DocumentResponse document)
     {
-        previewFile = file;
+        if (selectedDocumentVersions.TryGetValue(document.BaseName, out var version))
+        {
+            return version;
+        }
+
+        var fallback = document.Versions
+            .OrderByDescending(v => v.Division)
+            .ThenByDescending(v => v.UploadedUtc)
+            .FirstOrDefault();
+
+        if (fallback is not null)
+        {
+            selectedDocumentVersions[document.BaseName] = fallback;
+        }
+
+        return fallback;
+    }
+
+    private void ChangeSelectedVersion(DocumentResponse document, string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return;
+        }
+
+        var version = document.Versions
+            .FirstOrDefault(v => string.Equals(v.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+
+        if (version is null)
+        {
+            return;
+        }
+
+        selectedDocumentVersions[document.BaseName] = version;
+
+        if (previewBaseName is not null && string.Equals(previewBaseName, document.BaseName, StringComparison.OrdinalIgnoreCase))
+        {
+            previewVersion = version;
+        }
+    }
+
+    private void PreviewDocument(DocumentResponse document)
+    {
+        var version = GetSelectedVersion(document);
+        if (version is null)
+        {
+            return;
+        }
+
+        previewBaseName = document.BaseName;
+        previewVersion = version;
     }
 
     private void ClosePreview()
     {
-        previewFile = null;
+        previewBaseName = null;
+        previewVersion = null;
+    }
+
+    private static string FormatVersionLabel(VersionResponse version)
+    {
+        var divisionLabel = $"Division {version.Division:D2}";
+        var timestamp = version.UploadedUtc.ToLocalTime().ToString("g");
+
+        if (string.IsNullOrWhiteSpace(version.Comment))
+        {
+            return $"{divisionLabel} • {timestamp}";
+        }
+
+        var comment = version.Comment.Length > 40
+            ? string.Concat(version.Comment.AsSpan(0, 40), '…')
+            : version.Comment;
+
+        return $"{divisionLabel} • {timestamp} • {comment}";
     }
 
     private string BuildPdfUrl(string line, string file)
@@ -365,6 +519,44 @@ else if (selectedLine is not null)
         var baseUrl = $"/pdf/{Uri.EscapeDataString(line)}/{Uri.EscapeDataString(file)}";
         var query = BuildPathQuery(currentPathSegments);
         return string.IsNullOrEmpty(query) ? baseUrl : $"{baseUrl}{query}";
+    }
+
+    private void SyncPreviewAfterReload()
+    {
+        if (previewBaseName is null || currentDocuments is null)
+        {
+            previewBaseName = null;
+            previewVersion = null;
+            return;
+        }
+
+        var document = currentDocuments.FirstOrDefault(d => string.Equals(d.BaseName, previewBaseName, StringComparison.OrdinalIgnoreCase));
+        if (document is null)
+        {
+            previewBaseName = null;
+            previewVersion = null;
+            return;
+        }
+
+        VersionResponse? updatedVersion = null;
+
+        if (previewVersion is not null)
+        {
+            updatedVersion = document.Versions
+                .FirstOrDefault(v => string.Equals(v.FileName, previewVersion.FileName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        updatedVersion ??= GetSelectedVersion(document);
+
+        if (updatedVersion is null)
+        {
+            previewBaseName = null;
+            previewVersion = null;
+        }
+        else
+        {
+            previewVersion = updatedVersion;
+        }
     }
 
     private string GetCurrentPathDisplay()
@@ -386,7 +578,8 @@ else if (selectedLine is not null)
             return;
         }
 
-        previewFile = null;
+        previewBaseName = null;
+        previewVersion = null;
         await LoadFilesAsync(selectedLine, Array.Empty<string>());
     }
 
@@ -402,7 +595,8 @@ else if (selectedLine is not null)
             return;
         }
 
-        previewFile = null;
+        previewBaseName = null;
+        previewVersion = null;
         var target = currentPathSegments.Take(depth + 1).ToList();
         await LoadFilesAsync(selectedLine, target);
     }
@@ -414,7 +608,8 @@ else if (selectedLine is not null)
             return;
         }
 
-        previewFile = null;
+        previewBaseName = null;
+        previewVersion = null;
         var target = new List<string>(currentPathSegments) { folder };
         await LoadFilesAsync(selectedLine, target);
     }
@@ -454,12 +649,20 @@ else if (selectedLine is not null)
         pendingFileName = file.Name;
     }
 
-    private bool CanUpload => selectedLine is not null && pendingUpload is not null && !isUploadingFile;
+    private bool CanUpload => selectedLine is not null && pendingUpload is not null && !isUploadingFile && !string.IsNullOrWhiteSpace(uploadComment);
 
     private async Task UploadSelectedFile()
     {
         if (!CanUpload || selectedLine is null || pendingUpload is null)
         {
+            return;
+        }
+
+        var comment = uploadComment?.Trim();
+        if (string.IsNullOrWhiteSpace(comment))
+        {
+            uploadError = "กรุณากรอกคอมเมนต์สำหรับการอัปโหลด";
+            uploadSuccess = null;
             return;
         }
 
@@ -475,17 +678,27 @@ else if (selectedLine is not null)
             var streamContent = new StreamContent(stream);
             streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
             content.Add(streamContent, "file", pendingUpload.Name);
+            content.Add(new StringContent(comment), "comment");
 
             var response = await Http.PostAsync(uploadEndpoint, content);
             if (response.IsSuccessStatusCode)
             {
-                var uploadedName = pendingFileName ?? pendingUpload.Name;
-                uploadSuccess = string.IsNullOrEmpty(uploadedName)
-                    ? "อัปโหลดไฟล์เรียบร้อย"
-                    : $"อัปโหลดไฟล์ {uploadedName} เรียบร้อย";
+                var uploadInfo = await response.Content.ReadFromJsonAsync<UploadResponse>();
+                if (uploadInfo is not null && !string.IsNullOrWhiteSpace(uploadInfo.BaseName))
+                {
+                    uploadSuccess = $"อัปโหลด Division {uploadInfo.Division:D2} สำหรับ {uploadInfo.BaseName} เรียบร้อย";
+                }
+                else
+                {
+                    var uploadedName = pendingFileName ?? pendingUpload.Name;
+                    uploadSuccess = string.IsNullOrEmpty(uploadedName)
+                        ? "อัปโหลดไฟล์เรียบร้อย"
+                        : $"อัปโหลดไฟล์ {uploadedName} เรียบร้อย";
+                }
                 await LoadFilesAsync(selectedLine, currentPathSegments);
                 pendingUpload = null;
                 pendingFileName = null;
+                uploadComment = string.Empty;
             }
             else
             {
@@ -509,6 +722,7 @@ else if (selectedLine is not null)
         uploadSuccess = null;
         pendingUpload = null;
         pendingFileName = null;
+        uploadComment = string.Empty;
     }
 
     private bool CanCreateFolder => selectedLine is not null && !string.IsNullOrWhiteSpace(newFolderName) && !isCreatingFolder;
@@ -571,6 +785,30 @@ else if (selectedLine is not null)
         public List<string> PathSegments { get; set; } = new();
         public List<string> Folders { get; set; } = new();
         public List<string> Files { get; set; } = new();
+        public List<DocumentResponse> Documents { get; set; } = new();
+    }
+
+    private sealed class DocumentResponse
+    {
+        public string BaseName { get; set; } = string.Empty;
+        public List<VersionResponse> Versions { get; set; } = new();
+    }
+
+    private sealed class VersionResponse
+    {
+        public string FileName { get; set; } = string.Empty;
+        public int Division { get; set; }
+        public DateTime UploadedUtc { get; set; }
+        public string Comment { get; set; } = string.Empty;
+    }
+
+    private sealed class UploadResponse
+    {
+        public string File { get; set; } = string.Empty;
+        public string BaseName { get; set; } = string.Empty;
+        public int Division { get; set; }
+        public string Comment { get; set; } = string.Empty;
+        public DateTime UploadedUtc { get; set; }
     }
 
     private static async Task<string> ExtractErrorMessageAsync(HttpResponseMessage response)

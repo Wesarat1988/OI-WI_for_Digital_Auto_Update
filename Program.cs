@@ -1,4 +1,6 @@
 using System.Net.Mime;
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
 
@@ -58,11 +60,30 @@ app.MapRazorComponents<BlazorPdfApp.Components.App>()
 
 app.Run();
 
-internal sealed record FolderListing(string Line, IReadOnlyList<string> PathSegments, IReadOnlyList<string> Folders, IReadOnlyList<string> Files);
+internal sealed record FolderListing(
+    string Line,
+    IReadOnlyList<string> PathSegments,
+    IReadOnlyList<string> Folders,
+    IReadOnlyList<string> Files,
+    IReadOnlyList<FolderDocument> Documents);
+internal sealed record FolderDocument(string BaseName, IReadOnlyList<PdfVersion> Versions);
+internal sealed record PdfVersion(string FileName, int Division, DateTime UploadedUtc, string Comment);
 internal sealed record CreateFolderRequest(string? Name);
 internal sealed record LineEditStatus(string Line, BranchEditStatus? Root, string? ErrorMessage);
 internal sealed record BranchEditStatus(string Name, IReadOnlyList<string> PathSegments, int PdfCount, int TotalPdfCount, DateTime? LastModifiedUtc, string Status, IReadOnlyList<FileEditStatus> RecentFiles, IReadOnlyList<BranchEditStatus> Children, string? ErrorMessage);
 internal sealed record FileEditStatus(string FileName, DateTime LastModifiedUtc, long SizeBytes, string RelativePath);
+internal sealed class PdfMetadata
+{
+    public Dictionary<string, List<PdfVersionMetadata>> Documents { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+internal sealed class PdfVersionMetadata
+{
+    public string FileName { get; set; } = string.Empty;
+    public int Division { get; set; }
+    public DateTime UploadedUtc { get; set; }
+    public string Comment { get; set; } = string.Empty;
+}
 
 internal sealed class PdfBrowserService
 {
@@ -70,6 +91,13 @@ internal sealed class PdfBrowserService
     private readonly HashSet<string> _allowedLines;
     private readonly long _maxUploadBytes;
     private readonly ILogger _logger;
+    private const string MetadataFileName = ".pdf-metadata.json";
+    private const int MaxCommentLength = 500;
+    private static readonly JsonSerializerOptions MetadataSerializerOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     internal PdfBrowserService(string pdfRoot, IEnumerable<string> allowedLines, long maxUploadBytes, ILogger logger)
     {
@@ -124,7 +152,21 @@ internal sealed class PdfBrowserService
                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            return Results.Ok(new FolderListing(line, normalizedSegments ?? new List<string>(), folders, files));
+            var metadata = LoadMetadata(directoryPath!);
+            var metadataChanged = PruneMetadata(metadata, files);
+            var documents = BuildDocumentListing(directoryPath!, files, metadata);
+
+            if (metadataChanged)
+            {
+                TryPersistMetadata(directoryPath!, metadata);
+            }
+
+            return Results.Ok(new FolderListing(
+                line,
+                normalizedSegments ?? new List<string>(),
+                folders,
+                files,
+                documents));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -197,17 +239,62 @@ internal sealed class PdfBrowserService
                 return Results.BadRequest($"ไฟล์มีขนาดเกิน {_maxUploadBytes / (1024 * 1024)} MB");
             }
 
-            var destination = Path.Combine(directoryPath!, originalName);
+            var commentRaw = form["comment"].ToString();
+            if (string.IsNullOrWhiteSpace(commentRaw))
+            {
+                return Results.BadRequest("กรุณากรอกคอมเมนต์เพื่อบันทึกการอัปเดต");
+            }
+
+            var comment = commentRaw.Trim();
+            if (comment.Length > MaxCommentLength)
+            {
+                return Results.BadRequest($"คอมเมนต์ยาวเกินไป (สูงสุด {MaxCommentLength} ตัวอักษร)");
+            }
+
+            var metadata = LoadMetadata(directoryPath!);
+            var baseName = NormalizeBaseName(Path.GetFileNameWithoutExtension(originalName));
+            var nextDivision = GetNextDivisionNumber(directoryPath!, baseName, metadata);
+            var storedFileName = $"{baseName}_Division{nextDivision:D2}.pdf";
+            var destination = Path.Combine(directoryPath!, storedFileName);
+
             if (File.Exists(destination))
             {
-                return Results.Conflict("ไฟล์นี้มีอยู่แล้ว");
+                return Results.Conflict("ไฟล์เวอร์ชันนี้มีอยู่แล้ว");
             }
 
             await using var readStream = formFile.OpenReadStream();
             await using var writeStream = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             await readStream.CopyToAsync(writeStream);
 
-            return Results.Ok(new { file = originalName, path = pathSegments });
+            var now = DateTime.UtcNow;
+
+            if (!metadata.Documents.TryGetValue(baseName, out var versions))
+            {
+                versions = new List<PdfVersionMetadata>();
+                metadata.Documents[baseName] = versions;
+            }
+
+            versions.RemoveAll(v => string.Equals(v.FileName, storedFileName, StringComparison.OrdinalIgnoreCase));
+            versions.Add(new PdfVersionMetadata
+            {
+                FileName = storedFileName,
+                Division = nextDivision,
+                UploadedUtc = now,
+                Comment = comment
+            });
+            versions.Sort((left, right) => left.Division.CompareTo(right.Division));
+
+            SaveMetadata(directoryPath!, metadata);
+
+            return Results.Ok(new
+            {
+                file = storedFileName,
+                baseName,
+                division = nextDivision,
+                comment,
+                uploadedUtc = now,
+                path = pathSegments
+            });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -263,6 +350,309 @@ internal sealed class PdfBrowserService
             _logger.LogError(ex, "Failed to create subfolder {Folder} for line {Line}", name, line);
             return Results.Problem("ไม่สามารถสร้างโฟลเดอร์ได้ กรุณาตรวจสอบสิทธิ์การเข้าถึง");
         }
+    }
+
+    private PdfMetadata LoadMetadata(string directoryPath)
+    {
+        var metadataPath = Path.Combine(directoryPath, MetadataFileName);
+
+        if (!File.Exists(metadataPath))
+        {
+            return new PdfMetadata();
+        }
+
+        try
+        {
+            var json = File.ReadAllText(metadataPath, Encoding.UTF8);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return new PdfMetadata();
+            }
+
+            var metadata = JsonSerializer.Deserialize<PdfMetadata>(json, MetadataSerializerOptions) ?? new PdfMetadata();
+            NormalizeMetadata(metadata);
+            return metadata;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            _logger.LogWarning(ex, "Failed to load metadata for directory {Directory}", directoryPath);
+            return new PdfMetadata();
+        }
+    }
+
+    private static void NormalizeMetadata(PdfMetadata metadata)
+    {
+        if (metadata.Documents is null)
+        {
+            metadata.Documents = new Dictionary<string, List<PdfVersionMetadata>>(StringComparer.OrdinalIgnoreCase);
+            return;
+        }
+
+        if (metadata.Documents.Comparer != StringComparer.OrdinalIgnoreCase)
+        {
+            metadata.Documents = new Dictionary<string, List<PdfVersionMetadata>>(metadata.Documents, StringComparer.OrdinalIgnoreCase);
+        }
+
+        foreach (var key in metadata.Documents.Keys.ToList())
+        {
+            var versions = metadata.Documents[key] ?? new List<PdfVersionMetadata>();
+            var normalized = versions
+                .Where(v => v is not null && !string.IsNullOrWhiteSpace(v.FileName))
+                .Select(v =>
+                {
+                    v.Comment ??= string.Empty;
+                    return v;
+                })
+                .ToList();
+
+            metadata.Documents[key] = normalized;
+        }
+    }
+
+    private static bool PruneMetadata(PdfMetadata metadata, IReadOnlyCollection<string> currentFiles)
+    {
+        if (metadata.Documents.Count == 0)
+        {
+            return false;
+        }
+
+        var fileSet = new HashSet<string>(currentFiles, StringComparer.OrdinalIgnoreCase);
+        var changed = false;
+
+        foreach (var key in metadata.Documents.Keys.ToList())
+        {
+            var versions = metadata.Documents[key];
+            var filtered = versions
+                .Where(v => fileSet.Contains(v.FileName))
+                .ToList();
+
+            if (filtered.Count != versions.Count)
+            {
+                changed = true;
+                if (filtered.Count == 0)
+                {
+                    metadata.Documents.Remove(key);
+                }
+                else
+                {
+                    metadata.Documents[key] = filtered;
+                }
+            }
+        }
+
+        return changed;
+    }
+
+    private IReadOnlyList<FolderDocument> BuildDocumentListing(string directoryPath, IReadOnlyCollection<string> files, PdfMetadata metadata)
+    {
+        var documents = new Dictionary<string, List<PdfVersion>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in files)
+        {
+            string baseName;
+            PdfVersionMetadata? metadataEntry = null;
+
+            if (TryGetMetadataEntry(metadata, file, out var metadataBase, out metadataEntry))
+            {
+                baseName = NormalizeBaseName(metadataBase);
+            }
+            else if (TryParseDivisionSuffix(file, out var parsedBase, out _))
+            {
+                baseName = NormalizeBaseName(parsedBase);
+            }
+            else
+            {
+                baseName = NormalizeBaseName(Path.GetFileNameWithoutExtension(file));
+            }
+
+            var division = metadataEntry?.Division ?? 0;
+            if (division == 0 && TryParseDivisionSuffix(file, out var parsedBaseName, out var parsedDivision)
+                && string.Equals(parsedBaseName, baseName, StringComparison.OrdinalIgnoreCase))
+            {
+                division = parsedDivision;
+            }
+
+            var filePath = Path.Combine(directoryPath, file);
+            var uploadedUtc = metadataEntry?.UploadedUtc ?? GetLastWriteTimeUtcSafe(filePath);
+            var comment = metadataEntry?.Comment ?? string.Empty;
+
+            if (!documents.TryGetValue(baseName, out var versionList))
+            {
+                versionList = new List<PdfVersion>();
+                documents[baseName] = versionList;
+            }
+
+            if (versionList.Any(v => string.Equals(v.FileName, file, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            versionList.Add(new PdfVersion(file, division, uploadedUtc, comment));
+        }
+
+        foreach (var list in documents.Values)
+        {
+            list.Sort((left, right) =>
+            {
+                var divisionComparison = left.Division.CompareTo(right.Division);
+                if (divisionComparison != 0)
+                {
+                    return divisionComparison;
+                }
+
+                return string.Compare(left.FileName, right.FileName, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        return documents
+            .OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kvp => new FolderDocument(kvp.Key, kvp.Value))
+            .ToList();
+    }
+
+    private static bool TryGetMetadataEntry(PdfMetadata metadata, string fileName, out string baseName, out PdfVersionMetadata? entry)
+    {
+        foreach (var kvp in metadata.Documents)
+        {
+            var match = kvp.Value.FirstOrDefault(v => string.Equals(v.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                baseName = kvp.Key;
+                entry = match;
+                return true;
+            }
+        }
+
+        baseName = string.Empty;
+        entry = null;
+        return false;
+    }
+
+    private void TryPersistMetadata(string directoryPath, PdfMetadata metadata)
+    {
+        try
+        {
+            SaveMetadata(directoryPath, metadata);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Failed to persist metadata for {Directory}", directoryPath);
+        }
+    }
+
+    private void SaveMetadata(string directoryPath, PdfMetadata metadata)
+    {
+        NormalizeMetadata(metadata);
+        var metadataPath = Path.Combine(directoryPath, MetadataFileName);
+        var json = JsonSerializer.Serialize(metadata, MetadataSerializerOptions);
+        File.WriteAllText(metadataPath, json, Encoding.UTF8);
+    }
+
+    private DateTime GetLastWriteTimeUtcSafe(string fullPath)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(fullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Failed to read last write time for {File}", fullPath);
+            return DateTime.UtcNow;
+        }
+    }
+
+    private static string NormalizeBaseName(string rawBaseName)
+    {
+        if (string.IsNullOrWhiteSpace(rawBaseName))
+        {
+            return "Document";
+        }
+
+        var stripped = StripDivisionSuffix(rawBaseName.Trim());
+        return SanitizeFileNameComponent(stripped);
+    }
+
+    private static string StripDivisionSuffix(string baseName)
+    {
+        const string marker = "_Division";
+        var index = baseName.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index >= 0)
+        {
+            var suffix = baseName[(index + marker.Length)..];
+            if (int.TryParse(suffix, out _))
+            {
+                return baseName[..index];
+            }
+        }
+
+        return baseName;
+    }
+
+    private static string SanitizeFileNameComponent(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "Document";
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+
+        foreach (var ch in value)
+        {
+            builder.Append(invalid.Contains(ch) ? '_' : ch);
+        }
+
+        var sanitized = builder.ToString().Trim('_', ' ');
+        return string.IsNullOrWhiteSpace(sanitized) ? "Document" : sanitized;
+    }
+
+    private static bool TryParseDivisionSuffix(string fileName, out string baseName, out int division)
+    {
+        var nameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
+        const string marker = "_Division";
+        var index = nameWithoutExtension.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index >= 0)
+        {
+            var suffix = nameWithoutExtension[(index + marker.Length)..];
+            if (int.TryParse(suffix, out var parsedDivision) && parsedDivision > 0)
+            {
+                baseName = nameWithoutExtension[..index];
+                division = parsedDivision;
+                return true;
+            }
+        }
+
+        baseName = nameWithoutExtension;
+        division = 0;
+        return false;
+    }
+
+    private int GetNextDivisionNumber(string directoryPath, string baseName, PdfMetadata metadata)
+    {
+        var maxDivision = 0;
+
+        if (metadata.Documents.TryGetValue(baseName, out var versions) && versions.Count > 0)
+        {
+            maxDivision = Math.Max(maxDivision, versions.Max(v => v.Division));
+        }
+
+        foreach (var file in Directory.EnumerateFiles(directoryPath, "*.pdf", SearchOption.TopDirectoryOnly))
+        {
+            var fileName = Path.GetFileName(file);
+            if (fileName is null)
+            {
+                continue;
+            }
+
+            if (TryParseDivisionSuffix(fileName, out var parsedBase, out var parsedDivision)
+                && string.Equals(parsedBase, baseName, StringComparison.OrdinalIgnoreCase))
+            {
+                maxDivision = Math.Max(maxDivision, parsedDivision);
+            }
+        }
+
+        return maxDivision + 1;
     }
 
     private bool TryResolveDirectory(string line, IReadOnlyList<string> segments, out string? directoryPath, out List<string>? normalizedSegments, out IResult? error)
