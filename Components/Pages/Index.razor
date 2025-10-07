@@ -16,11 +16,11 @@
 {
     <div class="alert alert-danger" role="alert">@linesError</div>
 }
-@else if (isLoadingLines)
+else if (isLoadingLines)
 {
     <div class="text-muted">กำลังโหลดรายการโฟลเดอร์...</div>
 }
-@else
+else
 {
     <div class="mb-4 d-flex flex-wrap gap-2">
         @foreach (var line in AllLines)
@@ -50,17 +50,17 @@
 {
     <div class="alert alert-danger" role="alert">@filesError</div>
 }
-@else if (isLoadingFiles)
+else if (isLoadingFiles)
 {
     <div class="text-muted">กำลังโหลดไฟล์ PDF...</div>
 }
-@else if (selectedLine is not null)
+else if (selectedLine is not null)
 {
     @if (currentDocuments is null)
     {
         <div class="text-muted">เลือกโฟลเดอร์เพื่อดูไฟล์ PDF</div>
     }
-    @else
+    else
     {
         <nav class="mb-3" aria-label="breadcrumb">
             <ol class="breadcrumb mb-0">
@@ -70,7 +70,7 @@
                     {
                         @selectedLine
                     }
-                    @else
+                    else
                     {
                         <button class="btn btn-link p-0"
                                 type="button"
@@ -87,7 +87,7 @@
                         {
                             @folderName
                         }
-                        @else
+                        else
                         {
                             <button class="btn btn-link p-0"
                                     type="button"
@@ -114,7 +114,7 @@
             {
                 <div class="card-footer text-danger">@createFolderError</div>
             }
-            @else if (!string.IsNullOrEmpty(createFolderSuccess))
+            else if (!string.IsNullOrEmpty(createFolderSuccess))
             {
                 <div class="card-footer text-success">@createFolderSuccess</div>
             }
@@ -132,7 +132,7 @@
                         {
                             <div class="text-muted small">ไฟล์ที่เลือก: @pendingFileName</div>
                         }
-                        @else
+                        else
                         {
                             <div class="text-muted small">เลือกไฟล์ PDF เพื่ออัปโหลด</div>
                         }
@@ -157,7 +157,7 @@
             {
                 <div class="card-footer text-danger">@uploadError</div>
             }
-            @else if (!string.IsNullOrEmpty(uploadSuccess))
+            else if (!string.IsNullOrEmpty(uploadSuccess))
             {
                 <div class="card-footer text-success">@uploadSuccess</div>
             }
@@ -170,7 +170,7 @@
                 {
                     <div class="list-group-item text-muted">ไม่มีโฟลเดอร์ย่อย</div>
                 }
-                @else
+                else
                 {
                     @foreach (var folder in currentFolders)
                     {
@@ -190,12 +190,12 @@
         {
             <div class="alert alert-info" role="alert">โฟลเดอร์นี้ไม่มีไฟล์ PDF</div>
         }
-        @else
+        else
         {
             <div class="list-group mb-4">
                 @foreach (var document in currentDocuments)
                 {
-                    @{ var selectedVersion = GetSelectedVersion(document); }
+                    var selectedVersion = GetSelectedVersion(document);
                     <div class="list-group-item">
                         <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
                             <div class="flex-grow-1">
@@ -210,7 +210,7 @@
                                         <div class="small text-muted">หมายเหตุ: @selectedVersion.Comment</div>
                                     }
                                 }
-                                @else
+                                else
                                 {
                                     <div class="small text-muted">ยังไม่มีเวอร์ชันที่อัปโหลด</div>
                                 }
