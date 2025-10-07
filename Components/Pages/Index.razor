@@ -16,11 +16,11 @@
 {
     <div class="alert alert-danger" role="alert">@linesError</div>
 }
-else if (isLoadingLines)
+@else if (isLoadingLines)
 {
     <div class="text-muted">กำลังโหลดรายการโฟลเดอร์...</div>
 }
-else
+@else
 {
     <div class="mb-4 d-flex flex-wrap gap-2">
         @foreach (var line in AllLines)
@@ -38,7 +38,7 @@ else
         }
     </div>
 
-    if (!availableLines.Any())
+    @if (!availableLines.Any())
     {
         <div class="alert alert-warning" role="alert">
             ไม่พบโฟลเดอร์ F1, F2 หรือ F3 บนเซิร์ฟเวอร์
@@ -50,17 +50,17 @@ else
 {
     <div class="alert alert-danger" role="alert">@filesError</div>
 }
-else if (isLoadingFiles)
+@else if (isLoadingFiles)
 {
     <div class="text-muted">กำลังโหลดไฟล์ PDF...</div>
 }
-else if (selectedLine is not null)
+@else if (selectedLine is not null)
 {
-    if (currentDocuments is null)
+    @if (currentDocuments is null)
     {
         <div class="text-muted">เลือกโฟลเดอร์เพื่อดูไฟล์ PDF</div>
     }
-    else
+    @else
     {
         <nav class="mb-3" aria-label="breadcrumb">
             <ol class="breadcrumb mb-0">
@@ -70,7 +70,7 @@ else if (selectedLine is not null)
                     {
                         @selectedLine
                     }
-                    else
+                    @else
                     {
                         <button class="btn btn-link p-0"
                                 type="button"
@@ -87,7 +87,7 @@ else if (selectedLine is not null)
                         {
                             @folderName
                         }
-                        else
+                        @else
                         {
                             <button class="btn btn-link p-0"
                                     type="button"
@@ -114,7 +114,7 @@ else if (selectedLine is not null)
             {
                 <div class="card-footer text-danger">@createFolderError</div>
             }
-            else if (!string.IsNullOrEmpty(createFolderSuccess))
+            @else if (!string.IsNullOrEmpty(createFolderSuccess))
             {
                 <div class="card-footer text-success">@createFolderSuccess</div>
             }
@@ -132,7 +132,7 @@ else if (selectedLine is not null)
                         {
                             <div class="text-muted small">ไฟล์ที่เลือก: @pendingFileName</div>
                         }
-                        else
+                        @else
                         {
                             <div class="text-muted small">เลือกไฟล์ PDF เพื่ออัปโหลด</div>
                         }
@@ -157,7 +157,7 @@ else if (selectedLine is not null)
             {
                 <div class="card-footer text-danger">@uploadError</div>
             }
-            else if (!string.IsNullOrEmpty(uploadSuccess))
+            @else if (!string.IsNullOrEmpty(uploadSuccess))
             {
                 <div class="card-footer text-success">@uploadSuccess</div>
             }
@@ -170,7 +170,7 @@ else if (selectedLine is not null)
                 {
                     <div class="list-group-item text-muted">ไม่มีโฟลเดอร์ย่อย</div>
                 }
-                else
+                @else
                 {
                     @foreach (var folder in currentFolders)
                     {
@@ -186,11 +186,11 @@ else if (selectedLine is not null)
             </div>
         </div>
 
-        if (currentDocuments.Count == 0)
+        @if (currentDocuments.Count == 0)
         {
             <div class="alert alert-info" role="alert">โฟลเดอร์นี้ไม่มีไฟล์ PDF</div>
         }
-        else
+        @else
         {
             <div class="list-group mb-4">
                 @foreach (var document in currentDocuments)
@@ -210,7 +210,7 @@ else if (selectedLine is not null)
                                         <div class="small text-muted">หมายเหตุ: @selectedVersion.Comment</div>
                                     }
                                 }
-                                else
+                                @else
                                 {
                                     <div class="small text-muted">ยังไม่มีเวอร์ชันที่อัปโหลด</div>
                                 }
@@ -508,7 +508,7 @@ else if (selectedLine is not null)
         }
 
         var comment = version.Comment.Length > 40
-            ? string.Concat(version.Comment.AsSpan(0, 40), '…')
+            ? version.Comment.Substring(0, 40) + "…"
             : version.Comment;
 
         return $"{divisionLabel} • {timestamp} • {comment}";
