@@ -504,9 +504,12 @@ else
 
             var term = searchTerm.Trim();
             return folderIndex
-                .Where(f => MatchesSearch(f.DisplayName, term) || MatchesSearch(f.DisplayPath, term))
-                .OrderByDescending(f => f.LastModifiedUtc ?? DateTime.MinValue)
-                .ThenBy(f => f.DisplayPath, StringComparer.CurrentCultureIgnoreCase);
+                .Select(f => new { Item = f, Rank = CalculateFolderMatchRank(f, term) })
+                .Where(entry => entry.Rank < int.MaxValue)
+                .OrderBy(entry => entry.Rank)
+                .ThenByDescending(entry => entry.Item.LastModifiedUtc ?? DateTime.MinValue)
+                .ThenBy(entry => entry.Item.DisplayPath, StringComparer.CurrentCultureIgnoreCase)
+                .Select(entry => entry.Item);
         }
     }
 
@@ -521,9 +524,12 @@ else
 
             var term = searchTerm.Trim();
             return documentIndex
-                .Where(d => MatchesSearch(d.BaseName, term) || MatchesSearch(d.DisplayPath, term) || MatchesSearch(d.LatestComment, term))
-                .OrderByDescending(d => d.LatestUploadedUtc ?? DateTime.MinValue)
-                .ThenBy(d => d.DisplayPath, StringComparer.CurrentCultureIgnoreCase);
+                .Select(d => new { Item = d, Rank = CalculateDocumentMatchRank(d, term) })
+                .Where(entry => entry.Rank < int.MaxValue)
+                .OrderBy(entry => entry.Rank)
+                .ThenByDescending(entry => entry.Item.LatestUploadedUtc ?? DateTime.MinValue)
+                .ThenBy(entry => entry.Item.DisplayPath, StringComparer.CurrentCultureIgnoreCase)
+                .Select(entry => entry.Item);
         }
     }
 
@@ -540,7 +546,7 @@ else
         }
 
         var term = searchTerm.Trim();
-        return folderIndex.Count(f => MatchesSearch(f.DisplayName, term) || MatchesSearch(f.DisplayPath, term));
+        return folderIndex.Count(f => CalculateFolderMatchRank(f, term) < int.MaxValue);
     }
 
     private int GetDocumentResultCount()
@@ -551,11 +557,64 @@ else
         }
 
         var term = searchTerm.Trim();
-        return documentIndex.Count(d => MatchesSearch(d.BaseName, term) || MatchesSearch(d.DisplayPath, term) || MatchesSearch(d.LatestComment, term));
+        return documentIndex.Count(d => CalculateDocumentMatchRank(d, term) < int.MaxValue);
     }
 
-    private static bool MatchesSearch(string? value, string term)
-        => !string.IsNullOrWhiteSpace(value) && term.Length > 0 && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+    private static int CalculateFolderMatchRank(FolderSearchResult folder, string term)
+    {
+        var ranks = new[]
+        {
+            CalculateMatchRank(term, folder.DisplayName),
+            CalculateMatchRank(term, folder.DisplayPath)
+        };
+
+        return ranks.Min();
+    }
+
+    private static int CalculateDocumentMatchRank(DocumentSearchResult document, string term)
+    {
+        var ranks = new List<int>
+        {
+            CalculateMatchRank(term, document.BaseName),
+            CalculateMatchRank(term, document.DisplayPath)
+        };
+
+        if (!string.IsNullOrWhiteSpace(document.LatestComment) && document.LatestComment.Contains(term, StringComparison.OrdinalIgnoreCase))
+        {
+            ranks.Add(3);
+        }
+        else
+        {
+            ranks.Add(int.MaxValue);
+        }
+
+        return ranks.Min();
+    }
+
+    private static int CalculateMatchRank(string term, string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return int.MaxValue;
+        }
+
+        if (string.Equals(candidate, term, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        if (candidate.StartsWith(term, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1;
+        }
+
+        if (candidate.Contains(term, StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+
+        return int.MaxValue;
+    }
 
     private void RebuildSearchIndexes()
     {
