@@ -2,8 +2,13 @@
 @using System
 @using System.Net.Http.Json
 @using System.Linq
+@using System.IO
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.JSInterop
+@using ClosedXML.Excel
 @inject HttpClient Http
 @inject NavigationManager NavManager
+@inject IJSRuntime JS
 @rendermode InteractiveServer
 
 <PageTitle>สถานะแก้ไขเอกสาร</PageTitle>
@@ -17,6 +22,128 @@
         }
         <span>รีเฟรช</span>
     </button>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+            <div class="fw-semibold">แก้ไขไฟล์ Excel บนเว็บไซต์</div>
+            <div class="text-muted small">อัปโหลดไฟล์ Excel เพื่อแก้ไขและดาวน์โหลดกลับเป็นเวอร์ชันใหม่</div>
+        </div>
+        @if (excelSheets.Count > 0)
+        {
+            <button type="button"
+                    class="btn btn-outline-danger btn-sm"
+                    disabled="@(isProcessingExcel || isExportingExcel)"
+                    @onclick="ResetExcelEditor">
+                ล้างข้อมูล
+            </button>
+        }
+    </div>
+    <div class="card-body">
+        <div class="row g-2 align-items-center mb-3">
+            <div class="col-12 col-md-auto">
+                <InputFile OnChange="HandleExcelSelected" accept=".xlsx,.xlsm,.xls" disabled="@isProcessingExcel" />
+            </div>
+            <div class="col">
+                @if (!string.IsNullOrEmpty(excelFileName))
+                {
+                    <div class="text-muted small">ไฟล์ที่เลือก: @excelFileName</div>
+                }
+                else
+                {
+                    <div class="text-muted small">รองรับไฟล์ .xlsx, .xlsm และ .xls (สูงสุด @ExcelSizeLimitText)</div>
+                }
+            </div>
+            <div class="col-12 col-md-auto d-flex">
+                <button type="button"
+                        class="btn btn-success w-100"
+                        disabled="@(!CanDownloadExcel)"
+                        @onclick="DownloadExcelAsync">
+                    @if (isExportingExcel)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    }
+                    <span>ดาวน์โหลด Excel ที่แก้ไข</span>
+                </button>
+            </div>
+        </div>
+
+        @if (isProcessingExcel)
+        {
+            <div class="text-muted">กำลังประมวลผลไฟล์ Excel...</div>
+        }
+        else
+        {
+            if (!string.IsNullOrEmpty(excelErrorMessage))
+            {
+                <div class="alert alert-danger">@excelErrorMessage</div>
+            }
+
+            if (excelSheets.Count == 0)
+            {
+                <div class="text-muted">เลือกไฟล์ Excel เพื่อเริ่มแก้ไขข้อมูล</div>
+            }
+            else if (ActiveExcelSheet is not null)
+            {
+                var sheet = ActiveExcelSheet!;
+                <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
+                    <label class="form-label mb-0 me-2">แผ่นงาน:</label>
+                    <div class="btn-group btn-group-sm" role="group">
+                        @for (var i = 0; i < excelSheets.Count; i++)
+                        {
+                            <button type="button"
+                                    class="btn @(i == activeSheetIndex ? "btn-primary" : "btn-outline-primary")"
+                                    @onclick="() => SelectExcelSheet(i)">
+                                @excelSheets[i].DisplayName
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="AddExcelRow">เพิ่มแถว</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="AddExcelColumn">เพิ่มคอลัมน์</button>
+                </div>
+
+                <div class="table-responsive excel-editor-table mb-3">
+                    <table class="table table-sm table-bordered align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col" class="text-center excel-index-column">#</th>
+                                @for (var col = 0; col < sheet.ColumnCount; col++)
+                                {
+                                    <th scope="col" class="text-center">@GetExcelColumnName(col)</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var row = 0; row < sheet.Rows.Count; row++)
+                            {
+                                <tr>
+                                    <th scope="row" class="text-center excel-index-column">@(@row + 1)</th>
+                                    @for (var col = 0; col < sheet.ColumnCount; col++)
+                                    {
+                                        <td>
+                                            <input class="form-control form-control-sm"
+                                                   value="@GetExcelCellValue(sheet, row, col)"
+                                                   @onchange="e => UpdateExcelCell(sheet, row, col, e)" />
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="text-muted small">แก้ไขข้อมูลในตารางแล้วกดดาวน์โหลดเพื่อรับไฟล์ Excel ใหม่</div>
+            }
+        }
+    </div>
+    @if (!string.IsNullOrEmpty(excelInfoMessage))
+    {
+        <div class="card-footer text-success">@excelInfoMessage</div>
+    }
 </div>
 
 <div class="card shadow-sm mb-4">
@@ -138,6 +265,26 @@
 </div>
 
 <style>
+    .excel-editor-table {
+        overflow: auto;
+        border: 1px solid var(--bs-border-color, #dee2e6);
+        border-radius: 0.75rem;
+    }
+
+    .excel-editor-table table {
+        margin-bottom: 0;
+        min-width: 40rem;
+    }
+
+    .excel-editor-table .form-control {
+        min-width: 6rem;
+    }
+
+    .excel-index-column {
+        width: 3rem;
+        white-space: nowrap;
+    }
+
     .search-tabs .nav-item button {
         border: none;
         border-bottom: 2px solid transparent;
@@ -446,6 +593,331 @@ else
 }
 
 @code {
+    private const long MaxExcelUploadBytes = 20L * 1024 * 1024;
+    private readonly List<ExcelSheetModel> excelSheets = new();
+    private int activeSheetIndex = -1;
+    private string? excelFileName;
+    private bool isProcessingExcel;
+    private bool isExportingExcel;
+    private string? excelErrorMessage;
+    private string? excelInfoMessage;
+
+    private ExcelSheetModel? ActiveExcelSheet
+        => activeSheetIndex >= 0 && activeSheetIndex < excelSheets.Count ? excelSheets[activeSheetIndex] : null;
+
+    private bool CanDownloadExcel => excelSheets.Count > 0 && !isProcessingExcel && !isExportingExcel;
+
+    private string ExcelSizeLimitText => $"{MaxExcelUploadBytes / (1024 * 1024)} MB";
+
+    private async Task HandleExcelSelected(InputFileChangeEventArgs e)
+    {
+        excelErrorMessage = null;
+        excelInfoMessage = null;
+
+        if (e.FileCount == 0 || e.File is null)
+        {
+            excelErrorMessage = "ไม่พบไฟล์ Excel ที่เลือก";
+            return;
+        }
+
+        var file = e.File;
+        var extension = Path.GetExtension(file.Name);
+        if (string.IsNullOrWhiteSpace(extension) || !IsSupportedExcelExtension(extension))
+        {
+            excelErrorMessage = "กรุณาเลือกไฟล์ Excel นามสกุล .xlsx, .xlsm หรือ .xls";
+            return;
+        }
+
+        if (file.Size > MaxExcelUploadBytes)
+        {
+            excelErrorMessage = $"ไฟล์มีขนาดเกิน {ExcelSizeLimitText}";
+            return;
+        }
+
+        isProcessingExcel = true;
+        excelFileName = file.Name;
+        excelSheets.Clear();
+        activeSheetIndex = -1;
+
+        try
+        {
+            await LoadExcelFromFileAsync(file);
+
+            if (excelSheets.Count == 0)
+            {
+                excelInfoMessage = "ไฟล์ Excel ไม่มีข้อมูลในแผ่นงาน";
+            }
+            else
+            {
+                activeSheetIndex = 0;
+                excelInfoMessage = $"โหลดไฟล์ {excelFileName} เรียบร้อย";
+            }
+        }
+        catch (Exception ex)
+        {
+            excelSheets.Clear();
+            activeSheetIndex = -1;
+            excelErrorMessage = $"ไม่สามารถเปิดไฟล์ Excel: {ex.Message}";
+        }
+        finally
+        {
+            isProcessingExcel = false;
+        }
+    }
+
+    private async Task LoadExcelFromFileAsync(IBrowserFile file)
+    {
+        await using var readStream = file.OpenReadStream(MaxExcelUploadBytes);
+        using var memoryStream = new MemoryStream();
+        await readStream.CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+
+        using var workbook = new XLWorkbook(memoryStream);
+        var index = 0;
+        foreach (var worksheet in workbook.Worksheets)
+        {
+            var model = ConvertWorksheet(worksheet, index);
+            excelSheets.Add(model);
+            index++;
+        }
+    }
+
+    private static ExcelSheetModel ConvertWorksheet(IXLWorksheet worksheet, int index)
+    {
+        var baseName = string.IsNullOrWhiteSpace(worksheet.Name) ? $"Sheet {index + 1}" : worksheet.Name;
+        var model = new ExcelSheetModel
+        {
+            Name = baseName,
+            DisplayName = baseName
+        };
+
+        var usedRange = worksheet.RangeUsed();
+        if (usedRange is null)
+        {
+            model.ColumnCount = 1;
+            model.Rows.Add(new List<string?> { string.Empty });
+            return model;
+        }
+
+        var rowCount = usedRange.RowCount();
+        var columnCount = usedRange.ColumnCount();
+        model.ColumnCount = Math.Max(columnCount, 1);
+
+        for (var rowIndex = 1; rowIndex <= rowCount; rowIndex++)
+        {
+            var row = new List<string?>(model.ColumnCount);
+            for (var columnIndex = 1; columnIndex <= model.ColumnCount; columnIndex++)
+            {
+                if (columnIndex <= columnCount)
+                {
+                    var cell = usedRange.Cell(rowIndex, columnIndex);
+                    row.Add(cell?.GetFormattedString() ?? string.Empty);
+                }
+                else
+                {
+                    row.Add(string.Empty);
+                }
+            }
+
+            model.Rows.Add(row);
+        }
+
+        if (model.Rows.Count == 0)
+        {
+            model.Rows.Add(new List<string?>(Enumerable.Repeat<string?>(string.Empty, model.ColumnCount)));
+        }
+
+        return model;
+    }
+
+    private void SelectExcelSheet(int index)
+    {
+        if (index < 0 || index >= excelSheets.Count)
+        {
+            return;
+        }
+
+        activeSheetIndex = index;
+    }
+
+    private void AddExcelRow()
+    {
+        if (ActiveExcelSheet is not { } sheet)
+        {
+            return;
+        }
+
+        var newRow = Enumerable.Repeat<string?>(string.Empty, sheet.ColumnCount).ToList();
+        sheet.Rows.Add(newRow);
+    }
+
+    private void AddExcelColumn()
+    {
+        if (ActiveExcelSheet is not { } sheet)
+        {
+            return;
+        }
+
+        sheet.ColumnCount++;
+        foreach (var row in sheet.Rows)
+        {
+            EnsureRowLength(row, sheet.ColumnCount);
+        }
+    }
+
+    private void UpdateExcelCell(ExcelSheetModel sheet, int rowIndex, int columnIndex, ChangeEventArgs change)
+    {
+        if (rowIndex < 0 || rowIndex >= sheet.Rows.Count)
+        {
+            return;
+        }
+
+        if (columnIndex < 0 || columnIndex >= sheet.ColumnCount)
+        {
+            return;
+        }
+
+        var row = sheet.Rows[rowIndex];
+        EnsureRowLength(row, sheet.ColumnCount);
+        row[columnIndex] = change.Value?.ToString() ?? string.Empty;
+    }
+
+    private static void EnsureRowLength(List<string?> row, int length)
+    {
+        while (row.Count < length)
+        {
+            row.Add(string.Empty);
+        }
+    }
+
+    private static bool IsSupportedExcelExtension(string extension)
+        => extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase)
+           || extension.Equals(".xlsm", StringComparison.OrdinalIgnoreCase)
+           || extension.Equals(".xls", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetExcelCellValue(ExcelSheetModel sheet, int rowIndex, int columnIndex)
+    {
+        if (rowIndex < 0 || rowIndex >= sheet.Rows.Count)
+        {
+            return string.Empty;
+        }
+
+        var row = sheet.Rows[rowIndex];
+        if (columnIndex < 0 || columnIndex >= row.Count)
+        {
+            return string.Empty;
+        }
+
+        return row[columnIndex] ?? string.Empty;
+    }
+
+    private static string GetExcelColumnName(int columnIndex)
+    {
+        var index = columnIndex + 1;
+        var result = string.Empty;
+
+        while (index > 0)
+        {
+            var remainder = (index - 1) % 26;
+            result = (char)('A' + remainder) + result;
+            index = (index - 1) / 26;
+        }
+
+        return result;
+    }
+
+    private async Task DownloadExcelAsync()
+    {
+        if (!CanDownloadExcel)
+        {
+            return;
+        }
+
+        isExportingExcel = true;
+
+        try
+        {
+            using var workbook = new XLWorkbook();
+
+            for (var index = 0; index < excelSheets.Count; index++)
+            {
+                var sheet = excelSheets[index];
+                var worksheet = workbook.Worksheets.Add(SanitizeWorksheetName(sheet.Name, index));
+
+                for (var rowIndex = 0; rowIndex < sheet.Rows.Count; rowIndex++)
+                {
+                    var row = sheet.Rows[rowIndex];
+                    EnsureRowLength(row, sheet.ColumnCount);
+
+                    for (var columnIndex = 0; columnIndex < sheet.ColumnCount; columnIndex++)
+                    {
+                        worksheet.Cell(rowIndex + 1, columnIndex + 1).Value = row[columnIndex] ?? string.Empty;
+                    }
+                }
+            }
+
+            using var memoryStream = new MemoryStream();
+            workbook.SaveAs(memoryStream);
+            var base64 = Convert.ToBase64String(memoryStream.ToArray());
+            var downloadName = BuildExcelDownloadName();
+            await JS.InvokeVoidAsync("excelEditor.downloadFile", downloadName, base64);
+            excelInfoMessage = $"ดาวน์โหลดไฟล์ {downloadName} เรียบร้อย";
+            excelErrorMessage = null;
+        }
+        catch (Exception ex)
+        {
+            excelErrorMessage = $"ไม่สามารถดาวน์โหลดไฟล์ Excel: {ex.Message}";
+        }
+        finally
+        {
+            isExportingExcel = false;
+        }
+    }
+
+    private string BuildExcelDownloadName()
+    {
+        if (string.IsNullOrWhiteSpace(excelFileName))
+        {
+            return "edited.xlsx";
+        }
+
+        var name = Path.GetFileNameWithoutExtension(excelFileName);
+        return string.Concat(name, "_edited.xlsx");
+    }
+
+    private static string SanitizeWorksheetName(string? name, int index)
+    {
+        var candidate = string.IsNullOrWhiteSpace(name) ? $"Sheet{index + 1}" : name;
+        foreach (var invalid in new[] { '\\', '/', '*', '[', ']', ':', '?' })
+        {
+            candidate = candidate.Replace(invalid, '_');
+        }
+
+        if (candidate.Length > 31)
+        {
+            candidate = candidate[..31];
+        }
+
+        return string.IsNullOrWhiteSpace(candidate) ? $"Sheet{index + 1}" : candidate;
+    }
+
+    private void ResetExcelEditor()
+    {
+        excelSheets.Clear();
+        activeSheetIndex = -1;
+        excelFileName = null;
+        excelErrorMessage = null;
+        excelInfoMessage = null;
+    }
+
+    private sealed class ExcelSheetModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public List<List<string?>> Rows { get; } = new();
+        public int ColumnCount { get; set; } = 1;
+    }
+
     private List<LineEditStatusResponse>? lineStatuses;
     private bool isLoading = true;
     private string? errorMessage;
