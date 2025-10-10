@@ -53,7 +53,7 @@
                         <input id="shiftAStart"
                                type="time"
                                class="form-control"
-                               @bind-value="shiftAStartString"
+                               @bind-value="shiftAStartValue"
                                @bind-value:event="oninput" />
                     </div>
                     <div class="col">
@@ -61,7 +61,7 @@
                         <input id="shiftAEnd"
                                type="time"
                                class="form-control"
-                               @bind-value="shiftAEndString"
+                               @bind-value="shiftAEndValue"
                                @bind-value:event="oninput" />
                     </div>
                 </div>
@@ -420,8 +420,8 @@
 
     private bool autoDispatch = true;
     private int syncIntervalMinutes = 5;
-    private TimeSpan shiftAStart = TimeSpan.FromHours(7);
-    private TimeSpan shiftAEnd = TimeSpan.FromHours(19);
+    private TimeOnly shiftAStart = new(7, 0);
+    private TimeOnly shiftAEnd = new(19, 0);
     private string defaultDisplayMode = "line";
     private bool showCompletedOnDisplay = false;
     private DateTime lastSyncUtc = DateTime.UtcNow.AddMinutes(-12);
@@ -441,26 +441,26 @@
     private WorkOrderEditModel? editingModel;
     private string? editError;
 
-    private string shiftAStartString
+    private TimeOnly? shiftAStartValue
     {
-        get => FormatTimeSpan(shiftAStart);
+        get => shiftAStart;
         set
         {
-            if (TimeSpan.TryParse(value, out var parsed))
+            if (value.HasValue)
             {
-                shiftAStart = parsed;
+                shiftAStart = value.Value;
             }
         }
     }
 
-    private string shiftAEndString
+    private TimeOnly? shiftAEndValue
     {
-        get => FormatTimeSpan(shiftAEnd);
+        get => shiftAEnd;
         set
         {
-            if (TimeSpan.TryParse(value, out var parsed))
+            if (value.HasValue)
             {
-                shiftAEnd = parsed;
+                shiftAEnd = value.Value;
             }
         }
     }
@@ -616,7 +616,7 @@
             return;
         }
 
-        if (!TryParseTime(draft.StartTime, out var startTime) || !TryParseTime(draft.EndTime, out var endTime))
+        if (draft.StartTime is null || draft.EndTime is null)
         {
             addError = "รูปแบบเวลาไม่ถูกต้อง";
             return;
@@ -628,8 +628,8 @@
             return;
         }
 
-        var start = draft.StartDate.Value.Date.Add(startTime);
-        var end = draft.EndDate.Value.Date.Add(endTime);
+        var start = draft.StartDate.Value.Date.Add(draft.StartTime.Value.ToTimeSpan());
+        var end = draft.EndDate.Value.Date.Add(draft.EndTime.Value.ToTimeSpan());
 
         if (end <= start)
         {
@@ -698,14 +698,14 @@
             return;
         }
 
-        if (!TryParseTime(editingModel.StartTime, out var startTime) || !TryParseTime(editingModel.EndTime, out var endTime))
+        if (editingModel.StartTime is null || editingModel.EndTime is null)
         {
             editError = "รูปแบบเวลาไม่ถูกต้อง";
             return;
         }
 
-        var start = editingModel.StartDate.Value.Date.Add(startTime);
-        var end = editingModel.EndDate.Value.Date.Add(endTime);
+        var start = editingModel.StartDate.Value.Date.Add(editingModel.StartTime.Value.ToTimeSpan());
+        var end = editingModel.EndDate.Value.Date.Add(editingModel.EndTime.Value.ToTimeSpan());
 
         if (end <= start)
         {
@@ -746,17 +746,6 @@
         {
             isRefreshing = false;
         }
-    }
-
-    private static bool TryParseTime(string? value, out TimeSpan time)
-    {
-        if (!string.IsNullOrWhiteSpace(value) && TimeSpan.TryParse(value, out time))
-        {
-            return true;
-        }
-
-        time = default;
-        return false;
     }
 
     private static string FormatStatus(WorkOrderStatus status) => status switch
@@ -814,9 +803,6 @@
         return string.Format(ThaiCulture, "{0} วันก่อน", (int)Math.Round(span.TotalDays));
     }
 
-    private static string FormatTimeSpan(TimeSpan span)
-        => string.Format(CultureInfo.InvariantCulture, "{0:00}:{1:00}", (int)span.TotalHours, span.Minutes);
-
     private sealed class WorkOrderEntry
     {
         public string WorkOrderNumber { get; set; } = string.Empty;
@@ -841,8 +827,8 @@
         public int TargetQuantity { get; set; } = 1000;
         public DateTime? StartDate { get; set; } = DateTime.Today;
         public DateTime? EndDate { get; set; } = DateTime.Today;
-        public string StartTime { get; set; } = "07:00";
-        public string EndTime { get; set; } = "19:00";
+        public TimeOnly? StartTime { get; set; } = new TimeOnly(7, 0);
+        public TimeOnly? EndTime { get; set; } = new TimeOnly(19, 0);
         public string Remark { get; set; } = string.Empty;
         public WorkOrderStatus Status { get; set; } = WorkOrderStatus.Scheduled;
         public bool IsPinned { get; set; }
@@ -857,8 +843,8 @@
             TargetQuantity = 1000;
             StartDate = DateTime.Today;
             EndDate = DateTime.Today;
-            StartTime = "07:00";
-            EndTime = "19:00";
+            StartTime = new TimeOnly(7, 0);
+            EndTime = new TimeOnly(19, 0);
             Remark = string.Empty;
             Status = WorkOrderStatus.Scheduled;
             IsPinned = false;
@@ -873,8 +859,8 @@
         public int TargetQuantity { get; set; }
         public DateTime? StartDate { get; set; }
         public DateTime? EndDate { get; set; }
-        public string StartTime { get; set; } = string.Empty;
-        public string EndTime { get; set; } = string.Empty;
+        public TimeOnly? StartTime { get; set; }
+        public TimeOnly? EndTime { get; set; }
         public string Remark { get; set; } = string.Empty;
         public bool IsPinned { get; set; }
 
@@ -885,8 +871,8 @@
             TargetQuantity = entry.TargetQuantity,
             StartDate = entry.StartDateTime.Date,
             EndDate = entry.EndDateTime.Date,
-            StartTime = FormatTimeSpan(entry.StartDateTime.TimeOfDay),
-            EndTime = FormatTimeSpan(entry.EndDateTime.TimeOfDay),
+            StartTime = TimeOnly.FromDateTime(entry.StartDateTime),
+            EndTime = TimeOnly.FromDateTime(entry.EndDateTime),
             Remark = entry.Remark,
             IsPinned = entry.IsPinned
         };
