@@ -2,6 +2,7 @@
 @using System
 @using System.Net.Http.Json
 @using System.Linq
+@using Microsoft.AspNetCore.WebUtilities
 @inject HttpClient Http
 @inject NavigationManager NavManager
 @rendermode InteractiveServer
@@ -17,6 +18,83 @@
         }
         <span>รีเฟรช</span>
     </button>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-header d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+        <div>
+            <div class="fw-semibold">แก้ไขไฟล์ Excel ด้วย Microsoft 365</div>
+            <div class="text-muted small">วางลิงก์แชร์จาก OneDrive หรือ SharePoint เพื่อเปิดแก้ไขด้วย Microsoft 365</div>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(microsoft365EmbedUrl))
+        {
+            <button type="button"
+                    class="btn btn-outline-danger btn-sm"
+                    @onclick="ResetMicrosoft365Editor">
+                ล้างลิงก์
+            </button>
+        }
+    </div>
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label fw-semibold">ลิงก์ไฟล์จาก Microsoft 365</label>
+                <div class="input-group">
+                    <input class="form-control"
+                           placeholder="https://..."
+                           @bind="microsoft365ShareLink"
+                           @bind:event="oninput"
+                           aria-label="ลิงก์ไฟล์ Excel Microsoft 365"
+                           spellcheck="false" />
+                    <button type="button"
+                            class="btn btn-primary"
+                            @onclick="InitializeMicrosoft365Editor"
+                            disabled="string.IsNullOrWhiteSpace(microsoft365ShareLink)">
+                        เปิดไฟล์
+                    </button>
+                </div>
+                <div class="form-text">
+                    แชร์ไฟล์จาก OneDrive หรือ SharePoint ด้วยสิทธิ์แก้ไข แล้ววางลิงก์ที่นี่เพื่อเปิดใน Microsoft 365
+                </div>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(microsoft365ErrorMessage))
+        {
+            <div class="alert alert-danger mt-3">@microsoft365ErrorMessage</div>
+        }
+        else if (!string.IsNullOrEmpty(microsoft365EmbedUrl))
+        {
+            <div class="alert alert-info mt-3 d-flex flex-column flex-lg-row justify-content-between gap-2 align-items-lg-center">
+                <div>
+                    ใช้กรอบด้านล่างเพื่อแก้ไขไฟล์ผ่าน Microsoft 365 หากต้องการเปิดเต็มหน้าจอให้คลิกปุ่ม “เปิดในแท็บใหม่”
+                </div>
+                @if (!string.IsNullOrEmpty(microsoft365EditUrl))
+                {
+                    <a class="btn btn-outline-primary btn-sm"
+                       href="@microsoft365EditUrl"
+                       target="_blank"
+                       rel="noopener noreferrer">
+                        เปิดในแท็บใหม่
+                    </a>
+                }
+            </div>
+
+            <div class="m365-editor-frame ratio ratio-16x9 mt-3">
+                <iframe src="@microsoft365EmbedUrl"
+                        title="Microsoft 365 Excel Editor"
+                        allowfullscreen
+                        allow="clipboard-write"
+                        loading="lazy"></iframe>
+            </div>
+        }
+        else
+        {
+            <div class="alert alert-secondary mt-3">
+                วางลิงก์ไฟล์ Excel จาก OneDrive หรือ SharePoint เพื่อเริ่มต้นการแก้ไขบน Microsoft 365
+            </div>
+        }
+    </div>
 </div>
 
 <div class="card shadow-sm mb-4">
@@ -138,6 +216,19 @@
 </div>
 
 <style>
+    .m365-editor-frame {
+        border: 1px solid var(--bs-border-color, #dee2e6);
+        border-radius: 0.75rem;
+        overflow: hidden;
+        background-color: #f8fafc;
+    }
+
+    .m365-editor-frame iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+    }
+
     .search-tabs .nav-item button {
         border: none;
         border-bottom: 2px solid transparent;
@@ -446,7 +537,145 @@ else
 }
 
 @code {
+    private string microsoft365ShareLink = string.Empty;
+    private string? microsoft365EmbedUrl;
+    private string? microsoft365EditUrl;
+    private string? microsoft365ErrorMessage;
+
+    private void InitializeMicrosoft365Editor()
+    {
+        microsoft365ErrorMessage = null;
+        microsoft365EmbedUrl = null;
+        microsoft365EditUrl = null;
+
+        var trimmed = microsoft365ShareLink?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            microsoft365ErrorMessage = "กรุณาวางลิงก์ไฟล์จาก Microsoft 365";
+            return;
+        }
+
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            microsoft365ErrorMessage = "รูปแบบลิงก์ไม่ถูกต้อง";
+            return;
+        }
+
+        if (!Microsoft365ExcelLinkBuilder.TryBuild(uri, out var editUrl, out var embedUrl, out var error))
+        {
+            microsoft365ErrorMessage = error;
+            return;
+        }
+
+        microsoft365ShareLink = trimmed;
+        microsoft365EditUrl = editUrl;
+        microsoft365EmbedUrl = embedUrl;
+    }
+
+    private void ResetMicrosoft365Editor()
+    {
+        microsoft365ShareLink = string.Empty;
+        microsoft365EmbedUrl = null;
+        microsoft365EditUrl = null;
+        microsoft365ErrorMessage = null;
+    }
+
+    private static class Microsoft365ExcelLinkBuilder
+    {
+        public static bool TryBuild(Uri shareUri, out string? editUrl, out string? embedUrl, out string? errorMessage)
+        {
+            editUrl = null;
+            embedUrl = null;
+            errorMessage = null;
+
+            var scheme = shareUri.Scheme;
+            if (!string.Equals(scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            {
+                errorMessage = "ต้องเป็นลิงก์ http หรือ https เท่านั้น";
+                return false;
+            }
+
+            if (string.Equals(shareUri.Host, "1drv.ms", StringComparison.OrdinalIgnoreCase))
+            {
+                var original = shareUri.ToString();
+                editUrl = original;
+                embedUrl = BuildEmbedUrl(original);
+                return true;
+            }
+
+            if (!IsMicrosoft365Host(shareUri.Host))
+            {
+                errorMessage = "รองรับเฉพาะลิงก์จาก OneDrive หรือ SharePoint (Microsoft 365)";
+                return false;
+            }
+
+            var editCandidate = BuildEditUrl(shareUri);
+            var embedCandidate = BuildEmbedUrl(editCandidate);
+
+            editUrl = editCandidate;
+            embedUrl = embedCandidate;
+            return true;
+        }
+
+        private static bool IsMicrosoft365Host(string host)
+        {
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                return false;
+            }
+
+            var normalized = host.ToLowerInvariant();
+
+            return normalized == "onedrive.live.com"
+                   || normalized == "1drv.ms"
+                   || normalized.EndsWith(".sharepoint.com", StringComparison.Ordinal)
+                   || normalized.EndsWith(".sharepoint-df.com", StringComparison.Ordinal)
+                   || normalized.EndsWith(".sharepoint.us", StringComparison.Ordinal)
+                   || normalized.EndsWith(".sharepoint-mil.us", StringComparison.Ordinal)
+                   || normalized.EndsWith(".sharepoint.de", StringComparison.Ordinal)
+                   || normalized.EndsWith(".sharepoint.cn", StringComparison.Ordinal)
+                   || normalized.EndsWith(".office.com", StringComparison.Ordinal)
+                   || normalized.EndsWith(".officeapps.live.com", StringComparison.Ordinal);
+        }
+
+        private static string BuildEditUrl(Uri shareUri)
+        {
+            var baseUrl = shareUri.GetLeftPart(UriPartial.Path);
+            var query = QueryHelpers.ParseQuery(shareUri.Query);
+            var normalized = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var kvp in query)
+            {
+                if (string.Equals(kvp.Key, "action", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                normalized[kvp.Key] = kvp.Value.LastOrDefault();
+            }
+
+            normalized["action"] = "edit";
+
+            var editUrl = QueryHelpers.AddQueryString(baseUrl, normalized);
+
+            if (!string.IsNullOrEmpty(shareUri.Fragment))
+            {
+                editUrl += shareUri.Fragment;
+            }
+
+            return editUrl;
+        }
+
+        private static string BuildEmbedUrl(string editUrl)
+        {
+            var encoded = Uri.EscapeDataString(editUrl);
+            return $"https://view.officeapps.live.com/op/embed.aspx?src={encoded}&wdAllowInteractivity=True&wdHideHeaders=True&wdDownloadButton=True";
+        }
+    }
+
     private List<LineEditStatusResponse>? lineStatuses;
+
     private bool isLoading = true;
     private string? errorMessage;
     private SearchTab activeTab = SearchTab.Folder;
