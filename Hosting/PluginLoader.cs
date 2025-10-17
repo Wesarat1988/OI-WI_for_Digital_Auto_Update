@@ -92,7 +92,7 @@ public static class PluginLoader
         var descriptors = new List<PluginDescriptor>();
         foreach (var manifest in LoadManifests(rootDir))
         {
-            if (manifest.Folder is null)
+            if (string.IsNullOrWhiteSpace(manifest.Folder))
             {
                 continue;
             }

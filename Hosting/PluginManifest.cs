@@ -13,5 +13,5 @@ public class PluginManifest
     public string EntryType { get; set; } = string.Empty;
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public string? Folder { get; set; }
+    public string Folder { get; set; } = string.Empty;
 }
