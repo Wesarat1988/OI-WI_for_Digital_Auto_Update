@@ -7,6 +7,11 @@ namespace BlazorPdfApp.Hosting;
 
 public static class PluginLoader
 {
+    private static readonly JsonSerializerOptions ManifestJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
     public static IReadOnlyList<IPlugin> LoadAll(IServiceProvider services, string pluginsDir)
     {
         var list = new List<IPlugin>();
@@ -18,9 +23,16 @@ public static class PluginLoader
             if (!File.Exists(manifestPath)) continue;
 
             var manifest = JsonSerializer.Deserialize<PluginManifest>(
-                File.ReadAllText(manifestPath)
+                File.ReadAllText(manifestPath),
+                ManifestJsonOptions
             );
             if (manifest is null) continue;
+
+            if (string.IsNullOrWhiteSpace(manifest.Assembly) ||
+                string.IsNullOrWhiteSpace(manifest.EntryType))
+            {
+                continue;
+            }
 
             var asmPath = Path.Combine(dir, manifest.Assembly);
             if (!File.Exists(asmPath)) continue;

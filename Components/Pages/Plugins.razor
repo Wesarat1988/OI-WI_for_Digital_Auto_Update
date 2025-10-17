@@ -1,16 +1,16 @@
 ﻿@page "/plugins"
 @using Contracts
-@inject List<IBlazorPlugin> Plugins
+@inject List<IBlazorPlugin> PluginList
 
 <h3>🧩 Installed Plugins</h3>
 
-@if (Plugins.Count == 0)
+@if (PluginList.Count == 0)
 {
     <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
 }
 else
 {
-    @foreach (var p in Plugins)
+    @foreach (var p in PluginList)
     {
         if (p.RootComponent is not null)
         {
