@@ -1,23 +1,40 @@
-﻿@page "/plugins"
-@using Contracts
-@inject List<IBlazorPlugin> PluginList
+@page "/Plugins"
+@using BlazorPdfApp.Hosting
+@using System.IO
+@inject IWebHostEnvironment Env
 
-<h3>🧩 Installed Plugins</h3>
+<h2><span class="bi bi-puzzle"></span> Installed Plugins</h2>
 
-@if (PluginList.Count == 0)
+@if (plugins?.Count > 0)
 {
-    <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
+    <ul class="plugin-list">
+        @foreach (var p in plugins)
+        {
+            <li class="plugin-item">
+                <h3>@p.Name <small>v@p.Version</small></h3>
+                <p><strong>ID:</strong> @p.Id</p>
+                <p><strong>Entry:</strong> @p.EntryType</p>
+            </li>
+        }
+    </ul>
 }
 else
 {
-    @foreach (var p in PluginList)
+    <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
+}
+
+<style>
+    .plugin-list { list-style: none; padding: 0; }
+    .plugin-item { margin: 1rem 0; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; }
+    .plugin-item h3 { margin: 0 0 0.5rem; }
+</style>
+
+@code {
+    private List<PluginManifest>? plugins;
+
+    protected override void OnInitialized()
     {
-        if (p.RootComponent is not null)
-        {
-            <section class="plugin-panel border rounded p-3 m-2">
-                <h4>@p.Name (@p.Version)</h4>
-                <DynamicComponent Type="@p.RootComponent" />
-            </section>
-        }
+        var pluginRoot = Path.Combine(Env.ContentRootPath, "Plugins");
+        plugins = PluginLoader.LoadManifests(pluginRoot);
     }
 }
