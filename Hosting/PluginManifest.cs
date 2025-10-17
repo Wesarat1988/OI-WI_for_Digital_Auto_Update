@@ -11,4 +11,7 @@ public class PluginManifest
     public string Assembly { get; set; } = string.Empty;
 
     public string EntryType { get; set; } = string.Empty;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? Folder { get; set; }
 }

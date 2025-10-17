@@ -2,9 +2,46 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
-using Contracts; // ถ้าโปรเจกต์นี้อ้างอิง Contracts อยู่แล้ว
+using Contracts;
 
 namespace BlazorPdfApp.Hosting;
+
+public sealed class PluginDescriptor
+{
+    public required PluginManifest Manifest { get; init; }
+    public required string Folder { get; init; }
+    public required Assembly Assembly { get; init; }
+    public required IPlugin Instance { get; init; }
+    public IBlazorPlugin? Blazor => Instance as IBlazorPlugin;
+}
+
+internal sealed class PluginLoadContext : AssemblyLoadContext
+{
+    private readonly string _pluginDir;
+
+    public PluginLoadContext(string pluginDir) : base(isCollectible: false)
+    {
+        _pluginDir = pluginDir;
+        Resolving += OnResolving;
+    }
+
+    protected override Assembly? Load(AssemblyName assemblyName)
+    {
+        var candidate = Path.Combine(_pluginDir, assemblyName.Name + ".dll");
+        if (File.Exists(candidate))
+        {
+            return LoadFromAssemblyPath(candidate);
+        }
+
+        return null;
+    }
+
+    private Assembly? OnResolving(AssemblyLoadContext alc, AssemblyName name)
+    {
+        var candidate = Path.Combine(_pluginDir, name.Name + ".dll");
+        return File.Exists(candidate) ? LoadFromAssemblyPath(candidate) : null;
+    }
+}
 
 public static class PluginLoader
 {
@@ -15,10 +52,10 @@ public static class PluginLoader
 
     public static List<PluginManifest> LoadManifests(string rootDir)
     {
-        var manifests = new List<PluginManifest>();
+        var result = new List<PluginManifest>();
         if (!Directory.Exists(rootDir))
         {
-            return manifests;
+            return result;
         }
 
         foreach (var dir in Directory.GetDirectories(rootDir))
@@ -33,35 +70,32 @@ public static class PluginLoader
             {
                 var json = File.ReadAllText(manifestPath);
                 var manifest = JsonSerializer.Deserialize<PluginManifest>(json, ManifestJsonOptions);
-                if (manifest is not null)
+                if (manifest is null)
                 {
-                    manifests.Add(manifest);
+                    continue;
                 }
+
+                manifest.Folder = dir;
+                result.Add(manifest);
             }
             catch
             {
-                // ignore invalid json
+                // ignore invalid manifest
             }
         }
 
-        return manifests;
+        return result;
     }
 
-    public static IReadOnlyList<IPlugin> LoadAll(IServiceProvider services, string pluginsDir)
+    public static List<PluginDescriptor> LoadAll(IServiceProvider services, string rootDir)
     {
-        var list = new List<IPlugin>();
-        if (!Directory.Exists(pluginsDir)) return list;
-
-        foreach (var dir in Directory.GetDirectories(pluginsDir))
+        var descriptors = new List<PluginDescriptor>();
+        foreach (var manifest in LoadManifests(rootDir))
         {
-            var manifestPath = Path.Combine(dir, "plugin.json");
-            if (!File.Exists(manifestPath)) continue;
-
-            var manifest = JsonSerializer.Deserialize<PluginManifest>(
-                File.ReadAllText(manifestPath),
-                ManifestJsonOptions
-            );
-            if (manifest is null) continue;
+            if (manifest.Folder is null)
+            {
+                continue;
+            }
 
             if (string.IsNullOrWhiteSpace(manifest.Assembly) ||
                 string.IsNullOrWhiteSpace(manifest.EntryType))
@@ -69,17 +103,59 @@ public static class PluginLoader
                 continue;
             }
 
-            var asmPath = Path.Combine(dir, manifest.Assembly);
-            if (!File.Exists(asmPath)) continue;
+            var assemblyPath = Path.Combine(manifest.Folder, manifest.Assembly);
+            if (!File.Exists(assemblyPath))
+            {
+                continue;
+            }
 
-            var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(asmPath);
-            var type = asm.GetType(manifest.EntryType, throwOnError: true)!;
-            var plug = (IPlugin)Activator.CreateInstance(type)!;
+            var alc = new PluginLoadContext(manifest.Folder);
+            Assembly asm;
+            try
+            {
+                asm = alc.LoadFromAssemblyPath(assemblyPath);
+            }
+            catch
+            {
+                continue;
+            }
 
-            plug.Initialize(services);
-            list.Add(plug);
+            var entryType = asm.GetType(manifest.EntryType, throwOnError: false, ignoreCase: false);
+            if (entryType is null)
+            {
+                continue;
+            }
+
+            if (!typeof(IPlugin).IsAssignableFrom(entryType))
+            {
+                continue;
+            }
+
+            IPlugin? instance;
+            try
+            {
+                instance = (IPlugin?)Activator.CreateInstance(entryType);
+                if (instance is null)
+                {
+                    continue;
+                }
+
+                instance.Initialize(services);
+            }
+            catch
+            {
+                continue;
+            }
+
+            descriptors.Add(new PluginDescriptor
+            {
+                Manifest = manifest,
+                Folder = manifest.Folder,
+                Assembly = asm,
+                Instance = instance,
+            });
         }
 
-        return list;
+        return descriptors;
     }
 }
