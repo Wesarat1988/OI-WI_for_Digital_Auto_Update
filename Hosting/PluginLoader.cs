@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+using System.IO;
+using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using Contracts; // ถ้าโปรเจกต์นี้อ้างอิง Contracts อยู่แล้ว
@@ -11,6 +12,40 @@ public static class PluginLoader
     {
         PropertyNameCaseInsensitive = true,
     };
+
+    public static List<PluginManifest> LoadManifests(string rootDir)
+    {
+        var manifests = new List<PluginManifest>();
+        if (!Directory.Exists(rootDir))
+        {
+            return manifests;
+        }
+
+        foreach (var dir in Directory.GetDirectories(rootDir))
+        {
+            var manifestPath = Path.Combine(dir, "plugin.json");
+            if (!File.Exists(manifestPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                var json = File.ReadAllText(manifestPath);
+                var manifest = JsonSerializer.Deserialize<PluginManifest>(json, ManifestJsonOptions);
+                if (manifest is not null)
+                {
+                    manifests.Add(manifest);
+                }
+            }
+            catch
+            {
+                // ignore invalid json
+            }
+        }
+
+        return manifests;
+    }
 
     public static IReadOnlyList<IPlugin> LoadAll(IServiceProvider services, string pluginsDir)
     {
