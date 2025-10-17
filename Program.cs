@@ -1,6 +1,7 @@
 using System.Net.Mime;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
 
@@ -66,20 +67,21 @@ app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext co
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
-    var pluginsDir = Path.Combine(app.Environment.ContentRootPath, "Plugins");
+    var env = services.GetRequiredService<IWebHostEnvironment>();
+    var pluginsDir = Path.Combine(env.ContentRootPath, "Plugins");
 
-    // โหลดปลั๊กอินทั้งหมด (ถ้าไม่มีโฟลเดอร์จะไม่ทำอะไร)
-    var allPlugins = PluginLoader.LoadAll(services, pluginsDir);
+    var loaded = PluginLoader.LoadAll(services, pluginsDir);
 
-    // รันงาน background ของปลั๊กอิน (ถ้ามี)
-    foreach (var p in allPlugins)
-        _ = p.ExecuteAsync();
-
-    // เก็บปลั๊กอินที่มี UI ไว้ให้หน้า /plugins นำไปแสดง
     var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
-    foreach (var p in allPlugins)
-        if (p is IBlazorPlugin ui)
-            uiBucket.Add(ui);
+    foreach (var descriptor in loaded)
+    {
+        _ = descriptor.Instance.ExecuteAsync();
+
+        if (descriptor.Blazor is not null)
+        {
+            uiBucket.Add(descriptor.Blazor);
+        }
+    }
 }
 // ===== [/ADD] Plugins =====
 
