@@ -1,23 +1,59 @@
-﻿@page "/plugins"
+@page "/Plugins"
+@using BlazorPdfApp.Hosting
 @using Contracts
-@inject List<IBlazorPlugin> PluginList
+@using Microsoft.AspNetCore.Components
+@using System.IO
+@inject IWebHostEnvironment Env
+@inject IServiceProvider Services
+@inject List<IBlazorPlugin> UiPlugins
 
-<h3>🧩 Installed Plugins</h3>
+<h2>Installed Plugins</h2>
 
-@if (PluginList.Count == 0)
+@if (manifests?.Count > 0)
 {
-    <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
+    <ul class="plugin-list">
+        @foreach (var p in manifests)
+        {
+            <li class="plugin-item">
+                <h3>@p.Name <small>v@p.Version</small></h3>
+                <p><strong>ID:</strong> @p.Id</p>
+                <p><strong>Entry:</strong> @p.EntryType</p>
+            </li>
+        }
+    </ul>
 }
 else
 {
-    @foreach (var p in PluginList)
+    <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
+}
+
+@if (UiPlugins?.Count > 0)
+{
+    <h3>Plugin Panels</h3>
+    @foreach (var plug in UiPlugins)
     {
-        if (p.RootComponent is not null)
+        if (plug.RootComponent is not null)
         {
-            <section class="plugin-panel border rounded p-3 m-2">
-                <h4>@p.Name (@p.Version)</h4>
-                <DynamicComponent Type="@p.RootComponent" />
-            </section>
+            <div class="plugin-panel">
+                <DynamicComponent Type="plug.RootComponent" Parameters="null" />
+            </div>
         }
+    }
+}
+
+<style>
+    .plugin-list { list-style: none; padding: 0; }
+    .plugin-item { margin: 1rem 0; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; }
+    .plugin-item h3 { margin: 0 0 0.5rem; }
+    .plugin-panel { margin: 1rem 0; padding: 1rem; border: 1px solid #bbb; border-radius: 8px; }
+</style>
+
+@code {
+    private List<PluginManifest>? manifests;
+
+    protected override void OnInitialized()
+    {
+        var pluginRoot = Path.Combine(Env.ContentRootPath, "Plugins");
+        manifests = PluginLoader.LoadManifests(pluginRoot);
     }
 }
