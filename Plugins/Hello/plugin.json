@@ -1,7 +1,7 @@
 {
-  "id": "hello",
+  "id": "demo.hello",
   "name": "Hello Plugin",
   "version": "1.0.0",
   "assembly": "HelloPlugin.dll",
-  "entryType": "HelloPlugin.HelloBlazorPlugin"
+  "entryType": "HelloPlugin.HelloPlugin"
 }
