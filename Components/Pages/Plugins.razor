@@ -1,0 +1,23 @@
+﻿@page "/plugins"
+@using Contracts
+@inject List<IBlazorPlugin> Plugins
+
+<h3>🧩 Installed Plugins</h3>
+
+@if (Plugins.Count == 0)
+{
+    <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
+}
+else
+{
+    @foreach (var p in Plugins)
+    {
+        if (p.RootComponent is not null)
+        {
+            <section class="plugin-panel border rounded p-3 m-2">
+                <h4>@p.Name (@p.Version)</h4>
+                <DynamicComponent Type="@p.RootComponent" />
+            </section>
+        }
+    }
+}

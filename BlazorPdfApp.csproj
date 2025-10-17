@@ -5,4 +5,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+	
+	
+	<ItemGroup>
+  <None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+</ItemGroup>
+
+	<ItemGroup>
+		<None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+	</ItemGroup>
 </Project>
+

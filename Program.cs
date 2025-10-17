@@ -4,6 +4,10 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging;
 
+// ===== [ADD] Plugins: using =====
+using Contracts;
+using BlazorPdfApp.Hosting; // ปรับให้ตรงกับ namespace ของ PluginLoader/PluginManifest ของคุณ
+
 const long MaxUploadBytes = 50L * 1024 * 1024; // 50 MB upload limit per PDF
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,6 +20,9 @@ builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = MaxUploadBytes;
 });
+
+// ===== [ADD] Plugins: DI bucket สำหรับปลั๊กอินที่มี UI =====
+builder.Services.AddSingleton<List<IBlazorPlugin>>();
 
 var app = builder.Build();
 
@@ -54,6 +61,27 @@ app.MapPost("/api/folders/{line}/upload", async (string line, HttpRequest reques
 app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext context)
         => await pdfService.CreateSubfolderAsync(line, context));
 // ====== /PDF browser configuration ======
+
+// ===== [ADD] Plugins: โหลดปลั๊กอินจากโฟลเดอร์ "Plugins" =====
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var pluginsDir = Path.Combine(app.Environment.ContentRootPath, "Plugins");
+
+    // โหลดปลั๊กอินทั้งหมด (ถ้าไม่มีโฟลเดอร์จะไม่ทำอะไร)
+    var allPlugins = PluginLoader.LoadAll(services, pluginsDir);
+
+    // รันงาน background ของปลั๊กอิน (ถ้ามี)
+    foreach (var p in allPlugins)
+        _ = p.ExecuteAsync();
+
+    // เก็บปลั๊กอินที่มี UI ไว้ให้หน้า /plugins นำไปแสดง
+    var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
+    foreach (var p in allPlugins)
+        if (p is IBlazorPlugin ui)
+            uiBucket.Add(ui);
+}
+// ===== [/ADD] Plugins =====
 
 app.MapRazorComponents<BlazorPdfApp.Components.App>()
    .AddInteractiveServerRenderMode();
