@@ -16,7 +16,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-builder.Services.AddSingleton<List<IBlazorPlugin>>(); // bucket UI plugins
 builder.Services.AddHttpClient();
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -67,7 +66,6 @@ app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext co
 // ===== [ADD] Plugins: โหลดปลั๊กอินจากโฟลเดอร์ "Plugins" =====
 using (var scope = app.Services.CreateScope())
 {
-    var sp  = scope.ServiceProvider;
     var services = scope.ServiceProvider;
     var env = services.GetRequiredService<IWebHostEnvironment>();
     var pluginsDir = Path.Combine(env.ContentRootPath, "Plugins");
