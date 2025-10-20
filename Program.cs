@@ -16,6 +16,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+builder.Services.AddSingleton<List<IBlazorPlugin>>(); // bucket UI plugins
 builder.Services.AddHttpClient();
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -66,6 +67,7 @@ app.MapPost("/api/folders/{line}/subfolders", async (string line, HttpContext co
 // ===== [ADD] Plugins: โหลดปลั๊กอินจากโฟลเดอร์ "Plugins" =====
 using (var scope = app.Services.CreateScope())
 {
+    var sp  = scope.ServiceProvider;
     var services = scope.ServiceProvider;
     var env = services.GetRequiredService<IWebHostEnvironment>();
     var pluginsDir = Path.Combine(env.ContentRootPath, "Plugins");
@@ -73,14 +75,10 @@ using (var scope = app.Services.CreateScope())
     var loaded = PluginLoader.LoadAll(services, pluginsDir);
 
     var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
-    foreach (var descriptor in loaded)
+    foreach (var d in loaded)
     {
-        _ = descriptor.Instance.ExecuteAsync();
-
-        if (descriptor.Blazor is not null)
-        {
-            uiBucket.Add(descriptor.Blazor);
-        }
+        _ = d.Instance.ExecuteAsync();          // งาน background ถ้ามี
+        if (d.Blazor is not null) uiBucket.Add(d.Blazor);
     }
 }
 // ===== [/ADD] Plugins =====

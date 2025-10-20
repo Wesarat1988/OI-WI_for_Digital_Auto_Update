@@ -1,18 +1,117 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.RazorWeb">
+	<PropertyGroup>
+		<!-- ให้ตรงกับ Host (ถ้า Host เป็น net8.0 ให้ใช้ net8.0) -->
+		<TargetFramework>net89.0</TargetFramework>
+		<ปลั๊กอินและContractsใช9เหมือนกัน
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
 
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-	
-	
-	<ItemGroup>
-  <None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
-</ItemGroup>
+		<!-- (ไม่บังคับ) ตั้งชื่อไฟล์ DLL ให้จำง่าย -->
+		<!-- <AssemblyName>WorkOrder.Plugin</AssemblyName> -->
+	</PropertyGroup>
 
+	<!-- ให้ใช้คอมโพเนนต์ Razor/Blazor ใน class library -->
 	<ItemGroup>
-		<None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />คัดลอกท
 	</ItemGroup>
-</Project>
 
+	<!-- อ้างอิง Contracts ของคุณ (แบบ ProjectReference หรือ Reference DLL ก็ได้) -->กอย่างใตPluginsไปที่binและpublishoutputNonePlugins..\Contracts**\Contracts*.csproj*"/>
+	<!-- หรือ
+    <Reference          CopyToOutputDirectoryInclude="ContractsPreserveNewest">
+      <HintPath>..\path\to\Contracts.dll</HintPath>
+    <
+              CopyToPublishDirectory="Always" />
+  </ItemGroup>
+</Project>
+	<PropertyGroup>
+		<!-- ให้ตรงกับ Host (ถ้า Host เป็น net8.0 ให้ใช้ net8.0) -->
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<!-- (ไม่บังคับ) ตั้งชื่อไฟล์ DLL ให้จำง่าย -->
+		<!-- <AssemblyName>WorkOrder.Plugin</AssemblyName> -->
+	</PropertyGroup>
+
+	<!-- ให้ใช้คอมโพเนนต์ Razor/Blazor ใน class library -->
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<!-- อ้างอิง Contracts ของคุณ (แบบ ProjectReference หรือ Reference DLL ก็ได้) -->
+	<ItemGroup>
+		<ProjectReference Include="..\Contracts\Contracts.csproj" />
+		<!-- หรือ
+    <Reference Include="Contracts">
+      <HintPath>..\path\to\Contracts.dll</HintPath>
+    </Reference>
+    -->
+	</ItemGroup>
+
+	<!-- ถ้าต้องการให้ plugin.json ติดไปกับ output ของปลั๊กอิน -->
+	<ItemGroup>
+		<None Include="plugin.json" CopyToOutputDirectory="Always" />
+	</ItemGroup>
+	<PropertyGroup>
+		<!-- ให้ตรงกับ Host (ถ้า Host เป็น net8.0 ให้ใช้ net8.0) -->
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<!-- (ไม่บังคับ) ตั้งชื่อไฟล์ DLL ให้จำง่าย -->
+		<!-- <AssemblyName>WorkOrder.Plugin</AssemblyName> -->
+	</PropertyGroup>
+
+	<!-- ให้ใช้คอมโพเนนต์ Razor/Blazor ใน class library -->
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<!-- อ้างอิง Contracts ของคุณ (แบบ ProjectReference หรือ Reference DLL ก็ได้) -->
+	<ItemGroup>
+		<ProjectReference Include="..\Contracts\Contracts.csproj" />
+		<!-- หรือ
+    <Reference Include="Contracts">
+      <HintPath>..\path\to\Contracts.dll</HintPath>
+    </Reference>
+    -->
+	</ItemGroup>
+
+	<!-- ถ้าต้องการให้ plugin.json ติดไปกับ output ของปลั๊กอิน -->
+	<ItemGroup>
+		<None Include="plugin.json" CopyToOutputDirectory="Always" />
+	</ItemGroup>
+	<Project Sdk="Microsoft.NET.Sdk.Web">
+
+		<PropertyGroup>
+			<TargetFramework>net9.0</TargetFramework>
+			<Nullable>enable</Nullable>
+			<ImplicitUsings>enable</ImplicitUsings>
+		</PropertyGroup>
+
+
+		<ItemGroup>
+			<None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+		</ItemGroup>
+
+		<ItemGroup>
+			<None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+		</ItemGroup>
+	</Project>
+
+	<PropertyGroup>
+		<TargetFramework>net9.0</TargetFramework>
+		<!-- ให้ปลั๊กอินและ Contracts ใช้ net9.0 เหมือนกัน -->
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+	</PropertyGroup>
+
+	<!-- คัดลอกทุกอย่างใต้ Plugins/ ไปที่ bin และ publish output -->
+	<ItemGroup>
+		<None Include="Plugins\**\*.*"
+			  CopyToOutputDirectory="PreserveNewest"
+			  CopyToPublishDirectory="Always" />
+	</ItemGroup>
+
+</Project>

@@ -15,7 +15,7 @@
         @foreach (var p in manifests)
         {
             <li class="plugin-item">
-                <h3>@p.Name <small>v@p.Version</small></h3>
+                <h3>@($"{p.Name} v{p.Version}")</h3>
                 <p><strong>ID:</strong> @p.Id</p>
                 <p><strong>Entry:</strong> @p.EntryType</p>
             </li>
