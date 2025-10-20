@@ -6,10 +6,7 @@
   </PropertyGroup>
 
 	<ItemGroup>
-		<None Include="Plugins\**\*.*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+		<None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Content Remove="Plugins\WorkOrder\plugin.json" />
-	</ItemGroup>
 </Project>

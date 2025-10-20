@@ -6,6 +6,7 @@
 @inject IWebHostEnvironment Env
 @inject IServiceProvider Services
 @inject IReadOnlyList<IBlazorPlugin> UiPlugins
+@inject NavigationManager Nav
 @rendermode InteractiveServer
 
 <h2>Installed Plugins</h2>
@@ -20,10 +21,14 @@
                 <p><strong>ID:</strong> @p.Id</p>
                 <p><strong>Entry:</strong> @p.EntryType</p>
 
-                @* เพิ่มลิงก์เข้าเพจของปลั๊กอิน ถ้าระบุ RouteBase *@
                 @if (!string.IsNullOrWhiteSpace(p.RouteBase))
                 {
-                    <p><a href="@p.RouteBase">Open: @p.RouteBase</a></p>
+                    <p>
+                        @* ใช้ NavLink เพื่อวิ่งผ่าน Blazor Router *@
+                        <NavLink href="@p.RouteBase" class="btn btn-sm btn-outline-primary">
+                            Open @p.RouteBase
+                        </NavLink>
+                    </p>
                 }
             </li>
         }
@@ -34,9 +39,19 @@ else
     <p>ยังไม่มีปลั๊กอินติดตั้งในระบบ</p>
 }
 
+<hr />
+<h5 class="mt-3">UI Plugins loaded: @UiPlugins?.Count</h5>
+
 @if (UiPlugins?.Count > 0)
 {
-    <h3>Plugin Panels</h3>
+    <ul class="small text-muted">
+        @foreach (var plug in UiPlugins)
+        {
+            <li>@plug.Id — <code>@plug.GetType().FullName</code>, root: <code>@plug.RootComponent?.FullName</code></li>
+        }
+    </ul>
+
+    <h3 class="mt-3">Plugin Panels</h3>
     @foreach (var plug in UiPlugins)
     {
         if (plug.RootComponent is not null)
@@ -48,7 +63,7 @@ else
                     </ChildContent>
                     <ErrorContent>
                         <div class="alert alert-warning">
-                            Plugin panel failed to render.
+                            Plugin panel <strong>@plug.Id</strong> render failed.
                         </div>
                     </ErrorContent>
                 </ErrorBoundary>
