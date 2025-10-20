@@ -5,7 +5,7 @@
 @using System.IO
 @inject IWebHostEnvironment Env
 @inject IServiceProvider Services
-@inject List<IBlazorPlugin> UiPlugins
+@inject IReadOnlyList<IBlazorPlugin> UiPlugins
 @rendermode InteractiveServer
 
 <h2>Installed Plugins</h2>

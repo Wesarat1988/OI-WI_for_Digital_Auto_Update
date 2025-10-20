@@ -1,8 +1,11 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Mime;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 // ===== [ADD] Plugins: using =====
@@ -24,6 +27,9 @@ builder.Services.Configure<FormOptions>(options =>
 
 // ===== [ADD] Plugins: DI bucket สำหรับปลั๊กอินที่มี UI =====
 builder.Services.AddSingleton<List<IBlazorPlugin>>();
+builder.Services.AddSingleton<IReadOnlyList<IBlazorPlugin>>(sp => sp.GetRequiredService<List<IBlazorPlugin>>());
+builder.Services.AddSingleton<List<PluginDescriptor>>();
+builder.Services.AddSingleton<IReadOnlyList<PluginDescriptor>>(sp => sp.GetRequiredService<List<PluginDescriptor>>());
 
 var app = builder.Build();
 
@@ -68,26 +74,67 @@ using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
     var env = services.GetRequiredService<IWebHostEnvironment>();
+    var loggerFactory = services.GetRequiredService<ILoggerFactory>();
+    var pluginLogger = loggerFactory.CreateLogger("PluginLoader");
     var pluginsDir = Path.Combine(env.ContentRootPath, "Plugins");
 
     // [NEW] ถ้ายังไม่มีโฟลเดอร์ ให้ log ไว้ (ไม่ throw)
     if (!Directory.Exists(pluginsDir))
     {
-        app.Logger.LogWarning("Plugins directory not found: {dir}", pluginsDir);
+        pluginLogger.LogWarning("Plugins directory not found: {dir}", pluginsDir);
     }
 
     var loaded = PluginLoader.LoadAll(services, pluginsDir);
 
+    var descriptorStore = services.GetRequiredService<List<PluginDescriptor>>();
+    descriptorStore.AddRange(loaded);
+
     var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
-    foreach (var d in loaded)
+    foreach (var descriptor in loaded)
     {
-        _ = d.Instance.ExecuteAsync();          // งาน background ถ้ามี
-        if (d.Blazor is not null) uiBucket.Add(d.Blazor);
+        try
+        {
+            _ = descriptor.Instance.ExecuteAsync();          // งาน background ถ้ามี
+        }
+        catch (Exception ex)
+        {
+            pluginLogger.LogError(ex, "Plugin execution failed: {PluginId}", descriptor.Manifest.Id);
+        }
+
+        if (descriptor.Blazor is not null)
+        {
+            uiBucket.Add(descriptor.Blazor);
+            pluginLogger.LogInformation("Loaded UI plugin: {Id} ({Name}) Root={Root}",
+                descriptor.Blazor.Id,
+                descriptor.Blazor.Name,
+                descriptor.Blazor.RootComponent?.FullName ?? "-");
+        }
+        else
+        {
+            pluginLogger.LogInformation("Loaded non-UI plugin: {Type}", descriptor.Instance.GetType().FullName);
+        }
     }
 
     // [NEW] log สรุปผลโหลดปลั๊กอิน
-    app.Logger.LogInformation("Plugins loaded: {count} (UI: {ui})",
+    pluginLogger.LogInformation("Plugins loaded: {count} (UI: {ui})",
         loaded.Count, uiBucket.Count);
+}
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/_debug/plugins", (IReadOnlyList<IBlazorPlugin> ui, IReadOnlyList<PluginDescriptor> descriptors) =>
+        Results.Json(new
+        {
+            count = ui.Count,
+            plugins = descriptors.Select(d => new
+            {
+                d.Manifest.Id,
+                d.Manifest.Name,
+                version = d.Manifest.Version,
+                route = d.Manifest.RouteBase,
+                root = d.Blazor?.RootComponent?.FullName
+            })
+        }));
 }
 // ===== [/ADD] Plugins =====
 

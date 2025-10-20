@@ -9,6 +9,7 @@ namespace BlazorPdfApp.Hosting
         public string Version { get; set; } = string.Empty;
         public string Assembly { get; set; } = string.Empty;
         public string EntryType { get; set; } = string.Empty;
+        public string? RouteBase { get; set; }
 
         [JsonIgnore]
         public string? Folder { get; set; } // set at runtime by loader
