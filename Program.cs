@@ -70,6 +70,12 @@ using (var scope = app.Services.CreateScope())
     var env = services.GetRequiredService<IWebHostEnvironment>();
     var pluginsDir = Path.Combine(env.ContentRootPath, "Plugins");
 
+    // [NEW] ถ้ายังไม่มีโฟลเดอร์ ให้ log ไว้ (ไม่ throw)
+    if (!Directory.Exists(pluginsDir))
+    {
+        app.Logger.LogWarning("Plugins directory not found: {dir}", pluginsDir);
+    }
+
     var loaded = PluginLoader.LoadAll(services, pluginsDir);
 
     var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
@@ -78,6 +84,10 @@ using (var scope = app.Services.CreateScope())
         _ = d.Instance.ExecuteAsync();          // งาน background ถ้ามี
         if (d.Blazor is not null) uiBucket.Add(d.Blazor);
     }
+
+    // [NEW] log สรุปผลโหลดปลั๊กอิน
+    app.Logger.LogInformation("Plugins loaded: {count} (UI: {ui})",
+        loaded.Count, uiBucket.Count);
 }
 // ===== [/ADD] Plugins =====
 
