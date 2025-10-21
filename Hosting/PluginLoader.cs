@@ -1,4 +1,6 @@
+using System;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
@@ -6,13 +8,14 @@ using Contracts;
 
 namespace BlazorPdfApp.Hosting;
 
-public sealed class PluginManifest
+public sealed class PluginRegistration
 {
+    public required PluginDescriptor Descriptor { get; init; }
     public required PluginManifest Manifest { get; init; }
     public required string Folder { get; init; }
     public required Assembly Assembly { get; init; }
     public required IPlugin Instance { get; init; }
-    public IBlazorPlugin? Blazor => Instance as IBlazorPlugin;
+    public IBlazorPlugin? Blazor { get; init; }
 }
 
 internal sealed class PluginLoadContext : AssemblyLoadContext
@@ -50,9 +53,9 @@ public static class PluginLoader
         PropertyNameCaseInsensitive = true,
     };
 
-    public static List<PluginManifest> LoadManifests(string rootDir)
+    public static List<PluginDescriptor> LoadDescriptors(string rootDir)
     {
-        var result = new List<PluginManifest>();
+        var result = new List<PluginDescriptor>();
         if (!Directory.Exists(rootDir))
         {
             return result;
@@ -69,14 +72,14 @@ public static class PluginLoader
             try
             {
                 var json = File.ReadAllText(manifestPath);
-                var manifest = JsonSerializer.Deserialize<PluginManifest>(json, ManifestJsonOptions);
-                if (manifest is null)
+                var descriptor = JsonSerializer.Deserialize<PluginDescriptor>(json, ManifestJsonOptions);
+                if (descriptor is null)
                 {
                     continue;
                 }
 
-                manifest.Folder = dir;
-                result.Add(manifest);
+                descriptor.Folder = dir;
+                result.Add(descriptor);
             }
             catch
             {
@@ -87,29 +90,52 @@ public static class PluginLoader
         return result;
     }
 
-    public static List<PluginManifest> LoadAll(IServiceProvider services, string rootDir)
+    public static List<PluginManifest> LoadManifests(string rootDir)
     {
-        var descriptors = new List<PluginManifest>();
-        foreach (var manifest in LoadManifests(rootDir))
+        var descriptors = LoadDescriptors(rootDir);
+        var manifests = new List<PluginManifest>(descriptors.Count);
+
+        foreach (var descriptor in descriptors)
         {
-            if (string.IsNullOrWhiteSpace(manifest.Folder))
+            if (!descriptor.TryValidate(out _))
             {
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(manifest.Assembly) ||
-                string.IsNullOrWhiteSpace(manifest.EntryType))
+            manifests.Add(descriptor.ToContract());
+        }
+
+        return manifests;
+    }
+
+    public static List<PluginRegistration> LoadAll(IServiceProvider services, string rootDir)
+    {
+        var registrations = new List<PluginRegistration>();
+        foreach (var descriptor in LoadDescriptors(rootDir))
+        {
+            if (!descriptor.TryValidate(out _))
             {
                 continue;
             }
 
-            var assemblyPath = Path.Combine(manifest.Folder, manifest.Assembly);
+            if (string.IsNullOrWhiteSpace(descriptor.Folder))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(descriptor.Assembly) ||
+                string.IsNullOrWhiteSpace(descriptor.EntryType))
+            {
+                continue;
+            }
+
+            var assemblyPath = Path.Combine(descriptor.Folder, descriptor.Assembly);
             if (!File.Exists(assemblyPath))
             {
                 continue;
             }
 
-            var alc = new PluginLoadContext(manifest.Folder);
+            var alc = new PluginLoadContext(descriptor.Folder);
             Assembly asm;
             try
             {
@@ -120,7 +146,7 @@ public static class PluginLoader
                 continue;
             }
 
-            var entryType = asm.GetType(manifest.EntryType, throwOnError: false, ignoreCase: false);
+            var entryType = ResolveEntryType(asm, descriptor.EntryType);
             if (entryType is null)
             {
                 continue;
@@ -132,6 +158,7 @@ public static class PluginLoader
             }
 
             IPlugin? instance;
+            IBlazorPlugin? blazorView = null;
             try
             {
                 instance = (IPlugin?)Activator.CreateInstance(entryType);
@@ -141,21 +168,76 @@ public static class PluginLoader
                 }
 
                 instance.Initialize(services);
+
+                if (instance is IBlazorPlugin blazorPlugin)
+                {
+                    blazorView = BlazorPluginProxy.Sanitize(blazorPlugin);
+                }
             }
             catch
             {
                 continue;
             }
 
-            descriptors.Add(new PluginManifest
+            var manifest = descriptor.ToContract();
+
+            registrations.Add(new PluginRegistration
             {
+                Descriptor = descriptor,
                 Manifest = manifest,
-                Folder = manifest.Folder,
+                Folder = descriptor.Folder!,
                 Assembly = asm,
                 Instance = instance,
+                Blazor = blazorView ?? (instance as IBlazorPlugin),
             });
         }
 
-        return descriptors;
+        return registrations;
+    }
+
+    public static Type? ResolveEntryType(Assembly assembly)
+        => ResolveEntryType(assembly, null);
+
+    public static Type? ResolveEntryType(string? entryTypeName)
+    {
+        if (string.IsNullOrWhiteSpace(entryTypeName))
+        {
+            return null;
+        }
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var resolved = ResolveEntryType(assembly, entryTypeName);
+            if (resolved is not null)
+            {
+                return resolved;
+            }
+        }
+
+        return null;
+    }
+
+    public static Type? ResolveEntryType(Assembly assembly, string? entryTypeName)
+    {
+        if (assembly is null)
+        {
+            throw new ArgumentNullException(nameof(assembly));
+        }
+
+        if (string.IsNullOrWhiteSpace(entryTypeName))
+        {
+            return null;
+        }
+
+        var resolved = assembly.GetType(entryTypeName, throwOnError: false, ignoreCase: false);
+        if (resolved is not null)
+        {
+            return resolved;
+        }
+
+        return assembly
+            .GetTypes()
+            .FirstOrDefault(t => string.Equals(t.FullName, entryTypeName, StringComparison.Ordinal) ||
+                                 string.Equals(t.Name, entryTypeName, StringComparison.Ordinal));
     }
 }
