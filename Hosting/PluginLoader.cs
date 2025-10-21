@@ -1,4 +1,5 @@
-﻿using System.IO;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
@@ -155,7 +156,7 @@ public static class PluginLoader
                 continue;
             }
 
-            var entryType = asm.GetType(descriptor.EntryType, throwOnError: false, ignoreCase: false);
+            var entryType = ResolveEntryType(asm, descriptor.EntryType);
             if (entryType is null)
             {
                 continue;
@@ -197,5 +198,29 @@ public static class PluginLoader
         }
 
         return registrations;
+    }
+
+    public static Type? ResolveEntryType(Assembly assembly, string? entryTypeName)
+    {
+        if (assembly is null)
+        {
+            throw new ArgumentNullException(nameof(assembly));
+        }
+
+        if (string.IsNullOrWhiteSpace(entryTypeName))
+        {
+            return null;
+        }
+
+        var resolved = assembly.GetType(entryTypeName, throwOnError: false, ignoreCase: false);
+        if (resolved is not null)
+        {
+            return resolved;
+        }
+
+        return assembly
+            .GetTypes()
+            .FirstOrDefault(t => string.Equals(t.FullName, entryTypeName, StringComparison.Ordinal) ||
+                                 string.Equals(t.Name, entryTypeName, StringComparison.Ordinal));
     }
 }

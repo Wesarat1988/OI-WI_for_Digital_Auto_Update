@@ -1,11 +1,12 @@
 using System;
 using System.Reflection;
+using Contracts;
 
 namespace BlazorPdfApp.Hosting;
 
 internal static class BlazorPluginProxy
 {
-    public static IBlazorPlugin WrapIfNeeded(IBlazorPlugin plugin)
+    public static Contracts.IBlazorPlugin WrapIfNeeded(Contracts.IBlazorPlugin plugin)
     {
         var sanitizedType = ComponentTypeSanitizer.EnsureValid(plugin.RootComponent);
         if (sanitizedType == null || sanitizedType == plugin.RootComponent)
@@ -13,17 +14,17 @@ internal static class BlazorPluginProxy
             return plugin;
         }
 
-        var proxy = DispatchProxy.Create<IBlazorPlugin, SanitizingProxy>();
+        var proxy = DispatchProxy.Create<Contracts.IBlazorPlugin, SanitizingProxy>();
         ((SanitizingProxy)proxy!).Initialize(plugin, sanitizedType);
-        return (IBlazorPlugin)proxy!;
+        return (Contracts.IBlazorPlugin)proxy!;
     }
 
     private sealed class SanitizingProxy : DispatchProxy
     {
-        private IBlazorPlugin? _inner;
+        private Contracts.IBlazorPlugin? _inner;
         private Type? _sanitized;
 
-        public void Initialize(IBlazorPlugin inner, Type sanitized)
+        public void Initialize(Contracts.IBlazorPlugin inner, Type sanitized)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
             _sanitized = sanitized;
