@@ -62,7 +62,6 @@ public static class PluginLoader
         PropertyNameCaseInsensitive = true,
     };
 
-    // ====== อ่านไฟล์ plugin.json เป็น Descriptor (ของ Host) =====================================
     public static List<PluginDescriptor> LoadDescriptors(string rootDir)
     {
         var result = new List<PluginDescriptor>();
@@ -83,7 +82,10 @@ public static class PluginLoader
             {
                 var json = File.ReadAllText(manifestPath);
                 var descriptor = JsonSerializer.Deserialize<PluginDescriptor>(json, ManifestJsonOptions);
-                if (descriptor is null) continue;
+                if (descriptor is null)
+                {
+                    continue;
+                }
 
                 descriptor.Folder = dir;
                 result.Add(descriptor);
@@ -97,7 +99,6 @@ public static class PluginLoader
         return result;
     }
 
-    // ====== แปลง Descriptor → Contracts.Manifest (ไม่แตะ Contracts.csproj) =======================
     public static List<PluginManifest> LoadManifests(string rootDir)
     {
         var descriptors = LoadDescriptors(rootDir);
@@ -105,27 +106,43 @@ public static class PluginLoader
 
         foreach (var descriptor in descriptors)
         {
-            if (!descriptor.TryValidate(out _)) continue;
+            if (!descriptor.TryValidate(out _))
+            {
+                continue;
+            }
+
             manifests.Add(descriptor.ToContract());
         }
 
         return manifests;
     }
 
-    // ====== โหลดปลั๊กอินทั้งหมด + เติม Cache =====================================================
     public static List<PluginRegistration> LoadAll(IServiceProvider services, string rootDir)
     {
         var registrations = new List<PluginRegistration>();
-
         foreach (var descriptor in LoadDescriptors(rootDir))
         {
-            if (!descriptor.TryValidate(out _)) continue;
-            if (string.IsNullOrWhiteSpace(descriptor.Folder)) continue;
+            if (!descriptor.TryValidate(out _))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(descriptor.Folder))
+            {
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(descriptor.Assembly) ||
-                string.IsNullOrWhiteSpace(descriptor.EntryType)) continue;
+                string.IsNullOrWhiteSpace(descriptor.EntryType))
+            {
+                continue;
+            }
 
             var assemblyPath = Path.Combine(descriptor.Folder, descriptor.Assembly);
-            if (!File.Exists(assemblyPath)) continue;
+            if (!File.Exists(assemblyPath))
+            {
+                continue;
+            }
 
             var alc = new PluginLoadContext(descriptor.Folder);
             Assembly asm;
@@ -139,8 +156,15 @@ public static class PluginLoader
             }
 
             var entryType = asm.GetType(descriptor.EntryType, throwOnError: false, ignoreCase: false);
-            if (entryType is null) continue;
-            if (!typeof(IPlugin).IsAssignableFrom(entryType)) continue;
+            if (entryType is null)
+            {
+                continue;
+            }
+
+            if (!typeof(IPlugin).IsAssignableFrom(entryType))
+            {
+                continue;
+            }
 
             IPlugin? instance;
             try
@@ -149,6 +173,11 @@ public static class PluginLoader
                 if (instance is null) continue;
 
                 instance.Initialize(services);
+
+                if (instance is IBlazorPlugin blazorPlugin)
+                {
+                    instance = BlazorPluginProxy.WrapIfNeeded(blazorPlugin);
+                }
             }
             catch
             {
@@ -167,56 +196,6 @@ public static class PluginLoader
             });
         }
 
-        // ---- update central cache (atomic replace) ----
-        _cache.Clear();
-        _cache.AddRange(registrations);
-
-        _loadedAssemblies.Clear();
-        _loadedAssemblies.AddRange(registrations.Select(r => r.Assembly));
-
         return registrations;
-    }
-
-    // ====== Helper: หา Type ของคอมโพเนนต์ Entry เพื่อเรนเดอร์ด้วย DynamicComponent ============
-    /// <summary>
-    /// คืนค่า Type ของคอมโพเนนต์รากสำหรับปลั๊กอินตาม id (เช่น "workorder") จากปลั๊กอินที่ถูกโหลดไว้แล้ว
-    /// </summary>
-    public static Type? ResolveEntryType(string id)
-    {
-        // หา registration จาก id (ลองทั้ง Descriptor.Id และ Manifest.Id)
-        var reg = _cache.FirstOrDefault(r =>
-            string.Equals(r.Descriptor.Id, id, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(r.Manifest.Id, id, StringComparison.OrdinalIgnoreCase));
-
-        if (reg is null) return null;
-
-        // 1) ถ้าเป็น IBlazorPlugin และมี property บอก root component type ให้ใช้ก่อน
-        if (reg.Blazor is not null)
-        {
-            var bt = TryGetRootTypeFromBlazorPlugin(reg.Blazor);
-            if (bt is not null) return bt;
-        }
-
-        // 2) ใช้ entryType แบบ fully-qualified ที่มาจาก descriptor/manifest
-        var typeName = reg.Descriptor.EntryType;
-        if (!string.IsNullOrWhiteSpace(typeName))
-        {
-            var t = reg.Assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
-            if (t is not null) return t;
-        }
-
-        return null;
-    }
-
-    private static Type? TryGetRootTypeFromBlazorPlugin(IBlazorPlugin blazorPlugin)
-    {
-        // ใช้รีเฟลกชันหา property ที่มักใช้กัน (ไม่ผูกกับคอนแทรกต์ใด ๆ)
-        var t = blazorPlugin.GetType();
-        var p =
-            t.GetProperty("RootComponentType") ??
-            t.GetProperty("RootComponent") ??
-            t.GetProperty("RootType");
-
-        return p?.GetValue(blazorPlugin) as Type;
     }
 }
