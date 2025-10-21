@@ -1,0 +1,888 @@
+@page "/work-order-settings"   // ใช้เป็นเพจตั้งค่า
+@using System.Globalization
+@using System.Linq
+@rendermode InteractiveServer
+
+<PageTitle>Work Order Settings</PageTitle>
+
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center align-items-start gap-3 mb-4">
+    <div>
+        <h1 class="mb-1">Work Order Settings</h1>
+        <div class="text-muted">กำหนด Work Order ที่ต้องแสดงบนจอและตั้งค่าเวลาการดึงข้อมูลอัตโนมัติ</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <div class="small text-muted">อัปเดตล่าสุด: @FormatRelativeTime(lastSyncUtc)</div>
+        <button class="btn btn-outline-secondary" @onclick="TriggerRefresh" disabled="isRefreshing">
+            @if (isRefreshing)
+            {
+                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+            }
+            <span>รีเฟรชข้อมูล</span>
+        </button>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-12 col-xl-4">
+        <div class="card shadow-sm h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="fw-semibold">Global Settings</div>
+                <span class="badge bg-light text-dark">Display</span>
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" role="switch" id="autoDispatch" @bind="autoDispatch" />
+                    <label class="form-check-label" for="autoDispatch">ดึง Work Order ใหม่อัตโนมัติ</label>
+                    <div class="form-text">เปิดเพื่อให้ระบบซิงก์ Work Order จาก ERP ตามรอบเวลาที่กำหนด</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="syncInterval">รอบเวลาในการซิงก์ (นาที)</label>
+                    <input id="syncInterval"
+                           type="number"
+                           min="1"
+                           class="form-control"
+                           @bind="syncIntervalMinutes"
+                           @bind:event="oninput" />
+                    <div class="form-text">ระบบจะเรียก API เพื่ออัปเดต Work Order ทุก ๆ @syncIntervalMinutes นาที</div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col">
+                        <label class="form-label fw-semibold" for="shiftAStart">เริ่มกะ A</label>
+                        <input id="shiftAStart"
+                               type="time"
+                               class="form-control"
+                               @bind-value="shiftAStartValue"
+                               @bind-value:event="oninput" />
+                    </div>
+                    <div class="col">
+                        <label class="form-label fw-semibold" for="shiftAEnd">สิ้นสุดกะ A</label>
+                        <input id="shiftAEnd"
+                               type="time"
+                               class="form-control"
+                               @bind-value="shiftAEndValue"
+                               @bind-value:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="defaultDisplay">โหมดการแสดงผลบนจอ</label>
+                    <select id="defaultDisplay" class="form-select" @bind="defaultDisplayMode">
+                        <option value="line">แยกตามไลน์</option>
+                        <option value="model">แยกตามโมเดล</option>
+                        <option value="workorder">แสดงทีละ Work Order</option>
+                    </select>
+                </div>
+
+                <div class="form-check mb-3">
+                    <input id="showCompleted" class="form-check-input" type="checkbox" @bind="showCompletedOnDisplay" />
+                    <label class="form-check-label" for="showCompleted">แสดง Work Order ที่ปิดงานแล้วบนจอ</label>
+                </div>
+
+                <button class="btn btn-primary w-100" @onclick="SaveGlobalSettings">บันทึกการตั้งค่า</button>
+
+                @if (globalSettingsSavedUtc.HasValue)
+                {
+                    <div class="alert alert-success mt-3 mb-0 py-2 small">
+                        บันทึกสำเร็จ (@FormatRelativeTime(globalSettingsSavedUtc.Value))
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-xl-8">
+        <div class="card shadow-sm mb-4">
+            <div class="card-header d-flex flex-column flex-lg-row gap-2 align-items-lg-center justify-content-lg-between">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="status-dot bg-success"></div>
+                    <div>
+                        <div class="fw-semibold">Live Queue</div>
+                        <div class="small text-muted">รายการ Work Order ที่พร้อมส่งไปยังหน้าจอ Camera Trigger</div>
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <div class="badge rounded-pill text-bg-primary">ใช้งานอยู่ @ActiveCountDisplay</div>
+                    <div class="badge rounded-pill text-bg-warning">รอตรวจสอบ @PendingCountDisplay</div>
+                    <div class="badge rounded-pill text-bg-success">ตรึงหน้าจอ @PinnedCountDisplay</div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3 align-items-end">
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="searchTerm">ค้นหา</label>
+                        <div class="input-group">
+                            <span class="input-group-text">🔍</span>
+                            <input id="searchTerm"
+                                   class="form-control"
+                                   placeholder="WO / Model / Line"
+                                   @bind-value="workOrderSearch"
+                                   @bind-value:event="oninput" />
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-4">
+                        <label class="form-label" for="statusFilter">สถานะ</label>
+                        <select id="statusFilter" class="form-select" @bind="statusFilter">
+                            <option value="">ทั้งหมด</option>
+                            @foreach (var status in Enum.GetValues<WorkOrderStatus>())
+                            {
+                                <option value="@status">@FormatStatus(status)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-6 col-md-4">
+                        <label class="form-label" for="lineFilter">ไลน์การผลิต</label>
+                        <select id="lineFilter" class="form-select" @bind="lineFilter">
+                            <option value="">ทั้งหมด</option>
+                            @foreach (var line in availableLines)
+                            {
+                                <option value="@line">@line</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-responsive workorder-table">
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Work Order</th>
+                                <th>โมเดล</th>
+                                <th>ไลน์</th>
+                                <th>เป้าหมาย</th>
+                                <th>ช่วงเวลา</th>
+                                <th>สถานะ</th>
+                                <th class="text-center">Pin</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (!FilteredWorkOrders.Any())
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-muted text-center py-4">ไม่พบ Work Order ที่ตรงกับเงื่อนไข</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                @foreach (var order in FilteredWorkOrders)
+                                {
+                                    <tr class="@(order.IsPinned ? "table-active" : null)">
+                                        <td>
+                                            <div class="fw-semibold">@order.WorkOrderNumber</div>
+                                            <div class="small text-muted">Shift @order.Shift • @order.Remark</div>
+                                        </td>
+                                        <td>
+                                            <div class="fw-semibold">@order.Model</div>
+                                            <div class="small text-muted">@order.Description</div>
+                                        </td>
+                                        <td>@order.Line</td>
+                                        <td>@order.TargetQuantity.ToString("N0", ThaiCulture)</td>
+                                        <td>
+                                            <div>@FormatWindow(order.StartDateTime, order.EndDateTime)</div>
+                                            <div class="small text-muted">@FormatDuration(order.StartDateTime, order.EndDateTime)</div>
+                                        </td>
+                                        <td>
+                                            <span class="badge @GetStatusBadgeClass(order.Status)">@FormatStatus(order.Status)</span>
+                                        </td>
+                                        <td class="text-center">
+                                            <button class="btn btn-sm @(order.IsPinned ? "btn-warning" : "btn-outline-secondary")"
+                                                    type="button"
+                                                    @onclick="() => TogglePinned(order)">
+                                                <span class="@(order.IsPinned ? "bi bi-pin-angle-fill" : "bi bi-pin")"></span>
+                                            </button>
+                                        </td>
+                                        <td class="text-end">
+                                            <div class="btn-group">
+                                                <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => StartEdit(order)">แก้ไข</button>
+                                                <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => RemoveOrder(order)">ลบ</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="small text-muted">รวมทั้งหมด: @workOrders.Count รายการ</div>
+                <button class="btn btn-success" type="button" @onclick="ToggleAddPanel">@addPanelLabel</button>
+            </div>
+        </div>
+
+        @if (isAddPanelOpen)
+        {
+            <div class="card shadow-sm mb-4 border-success">
+                <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                    <div class="fw-semibold">เพิ่ม Work Order</div>
+                    <button class="btn-close btn-close-white" type="button" aria-label="ปิด" @onclick="ToggleAddPanel"></button>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(addError))
+                    {
+                        <div class="alert alert-danger">@addError</div>
+                    }
+                    else if (!string.IsNullOrEmpty(addSuccess))
+                    {
+                        <div class="alert alert-success">@addSuccess</div>
+                    }
+
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="newWorkOrder">Work Order</label>
+                            <input id="newWorkOrder" class="form-control" placeholder="เช่น WO230045" @bind="draft.WorkOrderNumber" @bind:event="oninput" />
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label fw-semibold" for="newLine">ไลน์</label>
+                            <select id="newLine" class="form-select" @bind="draft.Line">
+                                <option value="">เลือกไลน์</option>
+                                @foreach (var line in availableLines)
+                                {
+                                    <option value="@line">@line</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label class="form-label fw-semibold" for="newShift">กะ</label>
+                            <select id="newShift" class="form-select" @bind="draft.Shift">
+                                <option value="A">กะ A</option>
+                                <option value="B">กะ B</option>
+                                <option value="C">กะ C</option>
+                            </select>
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="newModel">โมเดล</label>
+                            <input id="newModel" class="form-control" placeholder="เช่น Model-01" @bind="draft.Model" @bind:event="oninput" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="newDescription">รายละเอียดเพิ่มเติม</label>
+                            <input id="newDescription" class="form-control" placeholder="เช่น ชุดทดลอง Lot#01" @bind="draft.Description" @bind:event="oninput" />
+                        </div>
+
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold" for="newTarget">เป้าหมายผลิต (ชิ้น)</label>
+                            <input id="newTarget" type="number" min="1" class="form-control" @bind="draft.TargetQuantity" @bind:event="oninput" />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold" for="newStartDate">วันที่เริ่ม</label>
+                            <InputDate id="newStartDate" class="form-control" @bind-Value="draft.StartDate" />
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold" for="newEndDate">วันที่สิ้นสุด</label>
+                            <InputDate id="newEndDate" class="form-control" @bind-Value="draft.EndDate" />
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="newStartTime">เวลาเริ่ม</label>
+                            <input id="newStartTime" type="time" class="form-control" @bind-value="draft.StartTime" @bind-value:event="oninput" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="newEndTime">เวลาสิ้นสุด</label>
+                            <input id="newEndTime" type="time" class="form-control" @bind-value="draft.EndTime" @bind-value:event="oninput" />
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label fw-semibold" for="newRemark">หมายเหตุ</label>
+                            <textarea id="newRemark" class="form-control" rows="2" placeholder="ข้อมูลที่ต้องการให้ทีมผลิตเห็น" @bind="draft.Remark" @bind:event="oninput"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold" for="newStatus">สถานะเริ่มต้น</label>
+                            <select id="newStatus" class="form-select" @bind="draft.Status">
+                                @foreach (var status in Enum.GetValues<WorkOrderStatus>())
+                                {
+                                    <option value="@status">@FormatStatus(status)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="newPinned" @bind="draft.IsPinned" />
+                                <label class="form-check-label" for="newPinned">ปักหมุดบนหน้าจอ Camera Trigger</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ResetDraft">ล้างข้อมูล</button>
+                    <button class="btn btn-success" type="button" @onclick="CreateWorkOrder">บันทึก</button>
+                </div>
+            </div>
+        }
+
+        @if (editingModel is not null && editingTarget is not null)
+        {
+            <div class="card shadow-sm border-primary">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <div class="fw-semibold">แก้ไข Work Order @editingTarget.WorkOrderNumber</div>
+                    <button class="btn-close btn-close-white" type="button" aria-label="ปิด" @onclick="CancelEdit"></button>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(editError))
+                    {
+                        <div class="alert alert-danger">@editError</div>
+                    }
+                    <div class="row g-3">
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold" for="editLine">ไลน์</label>
+                            <select id="editLine" class="form-select" @bind="editingModel.Line">
+                                @foreach (var line in availableLines)
+                                {
+                                    <option value="@line">@line</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold" for="editStatus">สถานะ</label>
+                            <select id="editStatus" class="form-select" @bind="editingModel.Status">
+                                @foreach (var status in Enum.GetValues<WorkOrderStatus>())
+                                {
+                                    <option value="@status">@FormatStatus(status)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label fw-semibold" for="editTarget">เป้าหมายผลิต</label>
+                            <input id="editTarget" type="number" min="1" class="form-control" @bind="editingModel.TargetQuantity" @bind:event="oninput" />
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="editStartDate">วันที่เริ่ม</label>
+                            <InputDate id="editStartDate" class="form-control" @bind-Value="editingModel.StartDate" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="editEndDate">วันที่สิ้นสุด</label>
+                            <InputDate id="editEndDate" class="form-control" @bind-Value="editingModel.EndDate" />
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="editStartTime">เวลาเริ่ม</label>
+                            <input id="editStartTime" type="time" class="form-control" @bind-value="editingModel.StartTime" @bind-value:event="oninput" />
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" for="editEndTime">เวลาสิ้นสุด</label>
+                            <input id="editEndTime" type="time" class="form-control" @bind-value="editingModel.EndTime" @bind-value:event="oninput" />
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label fw-semibold" for="editRemark">หมายเหตุ</label>
+                            <textarea id="editRemark" class="form-control" rows="2" @bind="editingModel.Remark" @bind:event="oninput"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input id="editPinned" class="form-check-input" type="checkbox" @bind="editingModel.IsPinned" />
+                                <label class="form-check-label" for="editPinned">ตรึงบนหน้าจอ Camera Trigger</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" type="button" @onclick="CancelEdit">ยกเลิก</button>
+                    <button class="btn btn-primary" type="button" @onclick="SaveEdit">บันทึกการแก้ไข</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .status-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+    }
+
+    .workorder-table table {
+        min-width: 760px;
+    }
+
+    .workorder-table tbody tr td {
+        vertical-align: middle;
+    }
+
+    .workorder-table .bi {
+        font-size: 1rem;
+    }
+
+    @@media (max-width: 575.98px) {
+        .workorder-table table {
+            min-width: auto;
+        }
+    }
+</style>
+
+@code {
+    private static readonly CultureInfo ThaiCulture = new("th-TH");
+    private readonly string[] availableLines = new[] { "F1", "F2", "F3", "F4" };
+    private readonly List<WorkOrderEntry> workOrders = new();
+
+    private bool autoDispatch = true;
+    private int syncIntervalMinutes = 5;
+    private TimeOnly shiftAStart = new(7, 0);
+    private TimeOnly shiftAEnd = new(19, 0);
+    private string defaultDisplayMode = "line";
+    private bool showCompletedOnDisplay = false;
+    private DateTime lastSyncUtc = DateTime.UtcNow.AddMinutes(-12);
+    private bool isRefreshing;
+    private DateTime? globalSettingsSavedUtc;
+
+    private string workOrderSearch = string.Empty;
+    private string? statusFilter;
+    private string? lineFilter;
+
+    private bool isAddPanelOpen;
+    private readonly WorkOrderDraft draft = new();
+    private string? addError;
+    private string? addSuccess;
+
+    private WorkOrderEntry? editingTarget;
+    private WorkOrderEditModel? editingModel;
+    private string? editError;
+
+    private TimeOnly? shiftAStartValue
+    {
+        get => shiftAStart;
+        set
+        {
+            if (value.HasValue)
+            {
+                shiftAStart = value.Value;
+            }
+        }
+    }
+
+    private TimeOnly? shiftAEndValue
+    {
+        get => shiftAEnd;
+        set
+        {
+            if (value.HasValue)
+            {
+                shiftAEnd = value.Value;
+            }
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        SeedWorkOrders();
+    }
+
+    private void SeedWorkOrders()
+    {
+        workOrders.Clear();
+        workOrders.AddRange(new[]
+        {
+            new WorkOrderEntry
+            {
+                WorkOrderNumber = "WO230145",
+                Model = "ACM-55",
+                Description = "Camera Trigger ชุดมาตรฐาน",
+                Line = "F1",
+                TargetQuantity = 1200,
+                StartDateTime = DateTime.Today.AddHours(7),
+                EndDateTime = DateTime.Today.AddHours(15),
+                Status = WorkOrderStatus.InProgress,
+                IsPinned = true,
+                Remark = "เปลี่ยน Tool #2",
+                Shift = "A"
+            },
+            new WorkOrderEntry
+            {
+                WorkOrderNumber = "WO230146",
+                Model = "ACM-42",
+                Description = "Lot พิเศษ QC",
+                Line = "F2",
+                TargetQuantity = 850,
+                StartDateTime = DateTime.Today.AddHours(15.5),
+                EndDateTime = DateTime.Today.AddHours(23.5),
+                Status = WorkOrderStatus.Scheduled,
+                IsPinned = false,
+                Remark = "เตรียม Sensor",
+                Shift = "B"
+            },
+            new WorkOrderEntry
+            {
+                WorkOrderNumber = "WO230147",
+                Model = "ACM-55",
+                Description = "ผลิตต่อเนื่อง",
+                Line = "F1",
+                TargetQuantity = 900,
+                StartDateTime = DateTime.Today.AddHours(19),
+                EndDateTime = DateTime.Today.AddDays(1).AddHours(3),
+                Status = WorkOrderStatus.Scheduled,
+                IsPinned = false,
+                Remark = "",
+                Shift = "B"
+            },
+            new WorkOrderEntry
+            {
+                WorkOrderNumber = "WO230148",
+                Model = "ACM-73",
+                Description = "ทดลองสีใหม่",
+                Line = "F3",
+                TargetQuantity = 640,
+                StartDateTime = DateTime.Today.AddHours(8),
+                EndDateTime = DateTime.Today.AddHours(12),
+                Status = WorkOrderStatus.OnHold,
+                IsPinned = false,
+                Remark = "รออนุมัติ QC",
+                Shift = "A"
+            }
+        });
+    }
+
+    private IEnumerable<WorkOrderEntry> FilteredWorkOrders => workOrders
+        .Where(MatchesSearch)
+        .Where(MatchesStatus)
+        .Where(MatchesLine)
+        .OrderBy(o => o.StartDateTime);
+
+    private string ActiveCountDisplay => workOrders.Count(o => o.Status == WorkOrderStatus.InProgress).ToString(ThaiCulture);
+    private string PendingCountDisplay => workOrders.Count(o => o.Status == WorkOrderStatus.Scheduled || o.Status == WorkOrderStatus.OnHold).ToString(ThaiCulture);
+    private string PinnedCountDisplay => workOrders.Count(o => o.IsPinned).ToString(ThaiCulture);
+
+    private string addPanelLabel => isAddPanelOpen ? "ซ่อนแบบฟอร์ม" : "เพิ่ม Work Order";
+
+    private bool MatchesSearch(WorkOrderEntry order)
+    {
+        if (string.IsNullOrWhiteSpace(workOrderSearch))
+        {
+            return true;
+        }
+
+        var term = workOrderSearch.Trim();
+        return order.WorkOrderNumber.Contains(term, StringComparison.OrdinalIgnoreCase)
+               || order.Model.Contains(term, StringComparison.OrdinalIgnoreCase)
+               || order.Line.Contains(term, StringComparison.OrdinalIgnoreCase)
+               || (!string.IsNullOrEmpty(order.Description) && order.Description.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool MatchesStatus(WorkOrderEntry order)
+    {
+        if (string.IsNullOrEmpty(statusFilter))
+        {
+            return true;
+        }
+
+        if (Enum.TryParse<WorkOrderStatus>(statusFilter, out var status))
+        {
+            return order.Status == status;
+        }
+
+        return true;
+    }
+
+    private bool MatchesLine(WorkOrderEntry order)
+        => string.IsNullOrEmpty(lineFilter) || string.Equals(order.Line, lineFilter, StringComparison.OrdinalIgnoreCase);
+
+    private void ToggleAddPanel()
+    {
+        isAddPanelOpen = !isAddPanelOpen;
+        addError = null;
+        addSuccess = null;
+    }
+
+    private void ResetDraft()
+    {
+        draft.Reset();
+        addError = null;
+        addSuccess = null;
+    }
+
+    private void CreateWorkOrder()
+    {
+        addError = null;
+        addSuccess = null;
+
+        if (string.IsNullOrWhiteSpace(draft.WorkOrderNumber))
+        {
+            addError = "กรุณาระบุเลข Work Order";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(draft.Line))
+        {
+            addError = "กรุณาเลือกไลน์การผลิต";
+            return;
+        }
+
+        if (draft.StartDate is null || draft.EndDate is null)
+        {
+            addError = "กรุณาระบุวันที่เริ่มและสิ้นสุด";
+            return;
+        }
+
+        if (draft.StartTime is null || draft.EndTime is null)
+        {
+            addError = "รูปแบบเวลาไม่ถูกต้อง";
+            return;
+        }
+
+        if (draft.TargetQuantity < 1)
+        {
+            addError = "เป้าหมายการผลิตต้องมากกว่า 0";
+            return;
+        }
+
+        var start = draft.StartDate.Value.Date.Add(draft.StartTime.Value.ToTimeSpan());
+        var end = draft.EndDate.Value.Date.Add(draft.EndTime.Value.ToTimeSpan());
+
+        if (end <= start)
+        {
+            addError = "เวลาสิ้นสุดต้องมากกว่าเวลาเริ่ม";
+            return;
+        }
+
+        var order = new WorkOrderEntry
+        {
+            WorkOrderNumber = draft.WorkOrderNumber.Trim(),
+            Model = draft.Model.Trim(),
+            Description = draft.Description.Trim(),
+            Line = draft.Line,
+            TargetQuantity = draft.TargetQuantity,
+            StartDateTime = start,
+            EndDateTime = end,
+            Status = draft.Status,
+            IsPinned = draft.IsPinned,
+            Remark = draft.Remark.Trim(),
+            Shift = draft.Shift
+        };
+
+        workOrders.Add(order);
+        addSuccess = $"เพิ่ม Work Order {order.WorkOrderNumber} เรียบร้อย";
+        draft.Reset();
+    }
+
+    private void RemoveOrder(WorkOrderEntry order)
+    {
+        workOrders.Remove(order);
+        if (editingTarget == order)
+        {
+            CancelEdit();
+        }
+    }
+
+    private void TogglePinned(WorkOrderEntry order)
+    {
+        order.IsPinned = !order.IsPinned;
+    }
+
+    private void StartEdit(WorkOrderEntry order)
+    {
+        editingTarget = order;
+        editingModel = WorkOrderEditModel.From(order);
+        editError = null;
+    }
+
+    private void CancelEdit()
+    {
+        editingTarget = null;
+        editingModel = null;
+        editError = null;
+    }
+
+    private void SaveEdit()
+    {
+        if (editingTarget is null || editingModel is null)
+        {
+            return;
+        }
+
+        if (editingModel.StartDate is null || editingModel.EndDate is null)
+        {
+            editError = "กรุณาระบุวันที่เริ่มและสิ้นสุด";
+            return;
+        }
+
+        if (editingModel.StartTime is null || editingModel.EndTime is null)
+        {
+            editError = "รูปแบบเวลาไม่ถูกต้อง";
+            return;
+        }
+
+        var start = editingModel.StartDate.Value.Date.Add(editingModel.StartTime.Value.ToTimeSpan());
+        var end = editingModel.EndDate.Value.Date.Add(editingModel.EndTime.Value.ToTimeSpan());
+
+        if (end <= start)
+        {
+            editError = "เวลาสิ้นสุดต้องมากกว่าเวลาเริ่ม";
+            return;
+        }
+
+        editingTarget.Line = editingModel.Line;
+        editingTarget.Status = editingModel.Status;
+        editingTarget.TargetQuantity = editingModel.TargetQuantity;
+        editingTarget.StartDateTime = start;
+        editingTarget.EndDateTime = end;
+        editingTarget.Remark = editingModel.Remark.Trim();
+        editingTarget.IsPinned = editingModel.IsPinned;
+
+        CancelEdit();
+    }
+
+    private void SaveGlobalSettings()
+    {
+        globalSettingsSavedUtc = DateTime.UtcNow;
+    }
+
+    private async Task TriggerRefresh()
+    {
+        if (isRefreshing)
+        {
+            return;
+        }
+
+        isRefreshing = true;
+        try
+        {
+            await Task.Delay(1500);
+            lastSyncUtc = DateTime.UtcNow;
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
+
+    private static string FormatStatus(WorkOrderStatus status) => status switch
+    {
+        WorkOrderStatus.Scheduled => "รอผลิต",
+        WorkOrderStatus.InProgress => "กำลังผลิต",
+        WorkOrderStatus.Completed => "ปิดงาน",
+        WorkOrderStatus.OnHold => "พักงาน",
+        _ => status.ToString()
+    };
+
+    private static string GetStatusBadgeClass(WorkOrderStatus status) => status switch
+    {
+        WorkOrderStatus.Scheduled => "text-bg-warning",
+        WorkOrderStatus.InProgress => "text-bg-primary",
+        WorkOrderStatus.Completed => "text-bg-success",
+        WorkOrderStatus.OnHold => "text-bg-secondary",
+        _ => "text-bg-light"
+    };
+
+    private static string FormatWindow(DateTime start, DateTime end)
+        => string.Format(ThaiCulture, "{0:dd MMM yyyy HH:mm} - {1:HH:mm}", start, end);
+
+    private static string FormatDuration(DateTime start, DateTime end)
+    {
+        var span = end - start;
+        if (span.TotalHours < 24)
+        {
+            return string.Format(ThaiCulture, "{0} ชม. {1} นาที", (int)span.TotalHours, span.Minutes);
+        }
+
+        var days = span.Days;
+        var hours = span.Hours;
+        return string.Format(ThaiCulture, "{0} วัน {1} ชม.", days, hours);
+    }
+
+    private static string FormatRelativeTime(DateTime timestampUtc)
+    {
+        var span = DateTime.UtcNow - timestampUtc;
+        if (span.TotalMinutes < 1)
+        {
+            return "เพิ่งอัปเดต";
+        }
+
+        if (span.TotalHours < 1)
+        {
+            return string.Format(ThaiCulture, "{0} นาทีที่ผ่านมา", (int)Math.Round(span.TotalMinutes));
+        }
+
+        if (span.TotalDays < 1)
+        {
+            return string.Format(ThaiCulture, "{0} ชั่วโมงที่ผ่านมา", (int)Math.Round(span.TotalHours));
+        }
+
+        return string.Format(ThaiCulture, "{0} วันก่อน", (int)Math.Round(span.TotalDays));
+    }
+
+    private sealed class WorkOrderEntry
+    {
+        public string WorkOrderNumber { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Line { get; set; } = string.Empty;
+        public int TargetQuantity { get; set; }
+        public DateTime StartDateTime { get; set; }
+        public DateTime EndDateTime { get; set; }
+        public WorkOrderStatus Status { get; set; }
+        public bool IsPinned { get; set; }
+        public string Remark { get; set; } = string.Empty;
+        public string Shift { get; set; } = "A";
+    }
+
+    private sealed class WorkOrderDraft
+    {
+        public string WorkOrderNumber { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Line { get; set; } = string.Empty;
+        public int TargetQuantity { get; set; } = 1000;
+        public DateTime? StartDate { get; set; } = DateTime.Today;
+        public DateTime? EndDate { get; set; } = DateTime.Today;
+        public TimeOnly? StartTime { get; set; } = new TimeOnly(7, 0);
+        public TimeOnly? EndTime { get; set; } = new TimeOnly(19, 0);
+        public string Remark { get; set; } = string.Empty;
+        public WorkOrderStatus Status { get; set; } = WorkOrderStatus.Scheduled;
+        public bool IsPinned { get; set; }
+        public string Shift { get; set; } = "A";
+
+        public void Reset()
+        {
+            WorkOrderNumber = string.Empty;
+            Model = string.Empty;
+            Description = string.Empty;
+            Line = string.Empty;
+            TargetQuantity = 1000;
+            StartDate = DateTime.Today;
+            EndDate = DateTime.Today;
+            StartTime = new TimeOnly(7, 0);
+            EndTime = new TimeOnly(19, 0);
+            Remark = string.Empty;
+            Status = WorkOrderStatus.Scheduled;
+            IsPinned = false;
+            Shift = "A";
+        }
+    }
+
+    private sealed class WorkOrderEditModel
+    {
+        public string Line { get; set; } = string.Empty;
+        public WorkOrderStatus Status { get; set; }
+        public int TargetQuantity { get; set; }
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public TimeOnly? StartTime { get; set; }
+        public TimeOnly? EndTime { get; set; }
+        public string Remark { get; set; } = string.Empty;
+        public bool IsPinned { get; set; }
+
+        public static WorkOrderEditModel From(WorkOrderEntry entry) => new()
+        {
+            Line = entry.Line,
+            Status = entry.Status,
+            TargetQuantity = entry.TargetQuantity,
+            StartDate = entry.StartDateTime.Date,
+            EndDate = entry.EndDateTime.Date,
+            StartTime = TimeOnly.FromDateTime(entry.StartDateTime),
+            EndTime = TimeOnly.FromDateTime(entry.EndDateTime),
+            Remark = entry.Remark,
+            IsPinned = entry.IsPinned
+        };
+    }
+
+    private enum WorkOrderStatus
+    {
+        Scheduled,
+        InProgress,
+        Completed,
+        OnHold
+    }
+}
