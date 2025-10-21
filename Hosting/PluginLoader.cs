@@ -48,6 +48,17 @@ internal sealed class PluginLoadContext : AssemblyLoadContext
 
 public static class PluginLoader
 {
+    // ====== Cache / Exposed state ================================================================
+    private static readonly List<PluginRegistration> _cache = new();
+    private static readonly List<Assembly> _loadedAssemblies = new();
+
+    /// <summary>ปลั๊กอินที่ถูกโหลดล่าสุด (อ่านอย่างเดียว)</summary>
+    public static IReadOnlyList<PluginRegistration> Registrations => _cache;
+
+    /// <summary>Assemblies ของปลั๊กอินทั้งหมดที่ถูกโหลด (ใช้กับ Router.AdditionalAssemblies ได้)</summary>
+    public static IReadOnlyList<Assembly> LoadedAssemblies => _loadedAssemblies;
+
+    // ====== JSON options สำหรับ manifest =========================================================
     private static readonly JsonSerializerOptions ManifestJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -162,10 +173,7 @@ public static class PluginLoader
             try
             {
                 instance = (IPlugin?)Activator.CreateInstance(entryType);
-                if (instance is null)
-                {
-                    continue;
-                }
+                if (instance is null) continue;
 
                 instance.Initialize(services);
 
