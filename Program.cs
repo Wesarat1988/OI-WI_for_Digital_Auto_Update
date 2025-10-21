@@ -28,8 +28,8 @@ builder.Services.Configure<FormOptions>(options =>
 // ===== [ADD] Plugins: DI bucket สำหรับปลั๊กอินที่มี UI =====
 builder.Services.AddSingleton<List<IBlazorPlugin>>();
 builder.Services.AddSingleton<IReadOnlyList<IBlazorPlugin>>(sp => sp.GetRequiredService<List<IBlazorPlugin>>());
-builder.Services.AddSingleton<List<PluginDescriptor>>();
-builder.Services.AddSingleton<IReadOnlyList<PluginDescriptor>>(sp => sp.GetRequiredService<List<PluginDescriptor>>());
+builder.Services.AddSingleton<List<BlazorPdfApp.Hosting.PluginManifest>>();
+builder.Services.AddSingleton<IReadOnlyList<BlazorPdfApp.Hosting.PluginManifest>>(sp => sp.GetRequiredService<List<BlazorPdfApp.Hosting.PluginManifest>>());
 
 var app = builder.Build();
 
@@ -86,7 +86,7 @@ using (var scope = app.Services.CreateScope())
 
     var loaded = PluginLoader.LoadAll(services, pluginsDir);
 
-    var descriptorStore = services.GetRequiredService<List<PluginDescriptor>>();
+    var descriptorStore = services.GetRequiredService<List<BlazorPdfApp.Hosting.PluginManifest>>();
     descriptorStore.AddRange(loaded);
 
     var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
@@ -122,7 +122,7 @@ using (var scope = app.Services.CreateScope())
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapGet("/_debug/plugins", (IReadOnlyList<IBlazorPlugin> ui, IReadOnlyList<PluginDescriptor> descriptors) =>
+    app.MapGet("/_debug/plugins", (IReadOnlyList<IBlazorPlugin> ui, IReadOnlyList<BlazorPdfApp.Hosting.PluginManifest> descriptors) =>
         Results.Json(new
         {
             count = ui.Count,

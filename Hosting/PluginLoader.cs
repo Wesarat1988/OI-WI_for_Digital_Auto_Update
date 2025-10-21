@@ -6,7 +6,7 @@ using Contracts;
 
 namespace BlazorPdfApp.Hosting;
 
-public sealed class PluginDescriptor
+public sealed class PluginManifest
 {
     public required PluginManifest Manifest { get; init; }
     public required string Folder { get; init; }
@@ -87,9 +87,9 @@ public static class PluginLoader
         return result;
     }
 
-    public static List<PluginDescriptor> LoadAll(IServiceProvider services, string rootDir)
+    public static List<PluginManifest> LoadAll(IServiceProvider services, string rootDir)
     {
-        var descriptors = new List<PluginDescriptor>();
+        var descriptors = new List<PluginManifest>();
         foreach (var manifest in LoadManifests(rootDir))
         {
             if (string.IsNullOrWhiteSpace(manifest.Folder))
@@ -147,7 +147,7 @@ public static class PluginLoader
                 continue;
             }
 
-            descriptors.Add(new PluginDescriptor
+            descriptors.Add(new PluginManifest
             {
                 Manifest = manifest,
                 Folder = manifest.Folder,
