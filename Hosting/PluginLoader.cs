@@ -177,7 +177,11 @@ public static class PluginLoader
 
                 if (instance is IBlazorPlugin blazorPlugin)
                 {
-                    instance = BlazorPluginProxy.WrapIfNeeded(blazorPlugin);
+                    var sanitized = ComponentTypeSanitizer.EnsureValid(blazorPlugin.RootComponent);
+                    if (sanitized is not null && sanitized != blazorPlugin.RootComponent)
+                    {
+                        blazorPlugin.RootComponent = sanitized;
+                    }
                 }
             }
             catch
@@ -199,6 +203,9 @@ public static class PluginLoader
 
         return registrations;
     }
+
+    public static Type? ResolveEntryType(Assembly assembly)
+        => ResolveEntryType(assembly, null);
 
     public static Type? ResolveEntryType(Assembly assembly, string? entryTypeName)
     {
