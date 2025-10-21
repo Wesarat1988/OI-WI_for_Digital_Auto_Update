@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -14,7 +15,7 @@ public sealed class PluginRegistration
     public required string Folder { get; init; }
     public required Assembly Assembly { get; init; }
     public required IPlugin Instance { get; init; }
-    public IBlazorPlugin? Blazor => Instance as IBlazorPlugin;
+    public IBlazorPlugin? Blazor { get; init; }
 }
 
 internal sealed class PluginLoadContext : AssemblyLoadContext
@@ -168,6 +169,7 @@ public static class PluginLoader
             }
 
             IPlugin? instance;
+            IBlazorPlugin? blazorView = null;
             try
             {
                 instance = (IPlugin?)Activator.CreateInstance(entryType);
@@ -177,11 +179,7 @@ public static class PluginLoader
 
                 if (instance is IBlazorPlugin blazorPlugin)
                 {
-                    var sanitized = ComponentTypeSanitizer.EnsureValid(blazorPlugin.RootComponent);
-                    if (sanitized is not null && sanitized != blazorPlugin.RootComponent)
-                    {
-                        blazorPlugin.RootComponent = sanitized;
-                    }
+                    blazorView = BlazorPluginProxy.Sanitize(blazorPlugin);
                 }
             }
             catch
@@ -198,6 +196,7 @@ public static class PluginLoader
                 Folder = descriptor.Folder!,
                 Assembly = asm,
                 Instance = instance,
+                Blazor = blazorView ?? (instance as IBlazorPlugin),
             });
         }
 
@@ -206,6 +205,25 @@ public static class PluginLoader
 
     public static Type? ResolveEntryType(Assembly assembly)
         => ResolveEntryType(assembly, null);
+
+    public static Type? ResolveEntryType(string? entryTypeName)
+    {
+        if (string.IsNullOrWhiteSpace(entryTypeName))
+        {
+            return null;
+        }
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var resolved = ResolveEntryType(assembly, entryTypeName);
+            if (resolved is not null)
+            {
+                return resolved;
+            }
+        }
+
+        return null;
+    }
 
     public static Type? ResolveEntryType(Assembly assembly, string? entryTypeName)
     {

@@ -1,58 +1,54 @@
 using System;
 using System.Reflection;
-using Contracts;
 
 namespace BlazorPdfApp.Hosting;
 
 internal static class BlazorPluginProxy
 {
-    public static Contracts.IBlazorPlugin WrapIfNeeded(Contracts.IBlazorPlugin plugin)
+    public static IBlazorPlugin Sanitize(IBlazorPlugin plugin)
     {
+        if (plugin is null)
+        {
+            throw new ArgumentNullException(nameof(plugin));
+        }
+
         var sanitizedType = ComponentTypeSanitizer.EnsureValid(plugin.RootComponent);
-        if (sanitizedType == null || sanitizedType == plugin.RootComponent)
+        if (sanitizedType is null || sanitizedType == plugin.RootComponent)
         {
             return plugin;
         }
 
-        var proxy = DispatchProxy.Create<Contracts.IBlazorPlugin, SanitizingProxy>();
-        ((SanitizingProxy)proxy!).Initialize(plugin, sanitizedType);
-        return (Contracts.IBlazorPlugin)proxy!;
+        var proxy = DispatchProxy.Create<IBlazorPlugin, SanitizingProxy>();
+        if (proxy is null)
+        {
+            return plugin;
+        }
+
+        ((SanitizingProxy)(object)proxy).Initialize(plugin, sanitizedType);
+        return proxy;
     }
 
     private sealed class SanitizingProxy : DispatchProxy
     {
-        private Contracts.IBlazorPlugin? _inner;
+        private IBlazorPlugin _inner = default!;
         private Type? _sanitized;
 
-        public void Initialize(Contracts.IBlazorPlugin inner, Type sanitized)
+        public void Initialize(IBlazorPlugin inner, Type sanitized)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _sanitized = sanitized;
+            _sanitized = sanitized ?? throw new ArgumentNullException(nameof(sanitized));
         }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod is null)
             {
-                throw new ArgumentNullException(nameof(targetMethod));
-            }
-
-            if (_inner is null)
-            {
-                throw new InvalidOperationException("Proxy not initialized.");
+                return null;
             }
 
             if (targetMethod.Name == "get_RootComponent")
             {
-                return _sanitized;
-            }
-
-            if (targetMethod.Name == "set_RootComponent" && args is { Length: 1 })
-            {
-                var provided = args[0] as Type;
-                var sanitized = ComponentTypeSanitizer.EnsureValid(provided);
-                _sanitized = sanitized ?? provided;
-                args[0] = _sanitized;
+                return _sanitized ?? _inner.RootComponent;
             }
 
             return targetMethod.Invoke(_inner, args);
