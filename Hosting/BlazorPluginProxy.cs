@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Contracts;
 
@@ -6,38 +8,38 @@ namespace BlazorPdfApp.Hosting;
 
 internal static class BlazorPluginProxy
 {
-    public static IBlazorPlugin Sanitize(IBlazorPlugin plugin)
+    public static Contracts.IBlazorPlugin Sanitize(Contracts.IBlazorPlugin plugin)
     {
         if (plugin is null)
         {
             throw new ArgumentNullException(nameof(plugin));
         }
 
-        var sanitizedType = ComponentTypeSanitizer.EnsureValid(plugin.RootComponent);
-        if (sanitizedType is null || sanitizedType == plugin.RootComponent)
+        if (plugin is DispatchProxy)
         {
             return plugin;
         }
 
-        var proxy = DispatchProxy.Create<IBlazorPlugin, SanitizingProxy>();
+        // Trigger creation (and caching) of a sanitized component type if necessary.
+        _ = ComponentTypeSanitizer.EnsureValid(plugin.RootComponent);
+
+        var proxy = DispatchProxy.Create<Contracts.IBlazorPlugin, SanitizingProxy>();
         if (proxy is null)
         {
             return plugin;
         }
 
-        ((SanitizingProxy)(object)proxy).Initialize(plugin, sanitizedType);
+        ((SanitizingProxy)(object)proxy).Initialize(plugin);
         return proxy;
     }
 
     private sealed class SanitizingProxy : DispatchProxy
     {
-        private IBlazorPlugin _inner = default!;
-        private Type? _sanitized;
+        private Contracts.IBlazorPlugin _inner = default!;
 
-        public void Initialize(IBlazorPlugin inner, Type sanitized)
+        public void Initialize(Contracts.IBlazorPlugin inner)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _sanitized = sanitized ?? throw new ArgumentNullException(nameof(sanitized));
         }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
@@ -47,12 +49,48 @@ internal static class BlazorPluginProxy
                 return null;
             }
 
-            if (targetMethod.Name == "get_RootComponent")
+            var result = targetMethod.Invoke(_inner, args);
+            if (result is null)
             {
-                return _sanitized ?? _inner.RootComponent;
+                return null;
             }
 
-            return targetMethod.Invoke(_inner, args);
+            var returnType = targetMethod.ReturnType;
+            if (returnType == typeof(Type) && result is Type componentType)
+            {
+                return SanitizeType(componentType);
+            }
+
+            if (typeof(IEnumerable<Type>).IsAssignableFrom(returnType) && result is IEnumerable<Type> types)
+            {
+                var sanitized = types
+                    .Select(t => SanitizeType(t) ?? t)
+                    .ToArray();
+
+                if (returnType.IsArray)
+                {
+                    return sanitized;
+                }
+
+                if (returnType.IsAssignableFrom(sanitized.GetType()))
+                {
+                    return sanitized;
+                }
+
+                return sanitized;
+            }
+
+            return result;
+        }
+
+        private static Type? SanitizeType(Type? type)
+        {
+            if (type is null)
+            {
+                return null;
+            }
+
+            return ComponentTypeSanitizer.EnsureValid(type) ?? type;
         }
     }
 }
