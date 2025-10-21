@@ -1,8 +1,8 @@
 {
-    "id": "workorder",
+    "id": "workorders",
     "name": "Work Order Plugin",
     "version": "1.0.0",
-    "assembly": "WorkOrderPlugin.dll",
-    "entryType": "BlazorApp5.Pages.WorkOrderPage",
+    "assembly": "BlazorApp5",
+    "entryType": "BlazorApp5.WorkOrderBlazorPlugin",
     "routeBase": "/workorders"
 }

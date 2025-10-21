@@ -30,21 +30,25 @@ internal sealed class PluginLoadContext : AssemblyLoadContext
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
-        var candidate = Path.Combine(_pluginDir, assemblyName.Name + ".dll");
-        if (File.Exists(candidate))
-        {
-            return LoadFromAssemblyPath(candidate);
-        }
+        // ❗ อย่าโหลด Contracts จากปลั๊กอิน
+        if (string.Equals(assemblyName.Name, "Contracts", StringComparison.OrdinalIgnoreCase))
+            return null;
 
-        return null;
+        var candidate = Path.Combine(_pluginDir, assemblyName.Name + ".dll");
+        return File.Exists(candidate) ? LoadFromAssemblyPath(candidate) : null;
     }
 
     private Assembly? OnResolving(AssemblyLoadContext alc, AssemblyName name)
     {
+        if (string.Equals(name.Name, "Contracts", StringComparison.OrdinalIgnoreCase))
+            return null;
+
         var candidate = Path.Combine(_pluginDir, name.Name + ".dll");
         return File.Exists(candidate) ? LoadFromAssemblyPath(candidate) : null;
     }
 }
+
+
 
 public static class PluginLoader
 {
@@ -199,6 +203,12 @@ public static class PluginLoader
                 Blazor = blazorView ?? (instance as IBlazorPlugin),
             });
         }
+        // ---- update caches so UI can read them ----
+        _cache.Clear();
+        _cache.AddRange(registrations);
+
+        _loadedAssemblies.Clear();
+        _loadedAssemblies.AddRange(registrations.Select(r => r.Assembly));
 
         return registrations;
     }
