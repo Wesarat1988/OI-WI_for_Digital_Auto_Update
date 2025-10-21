@@ -6,8 +6,9 @@ using Contracts;
 
 namespace BlazorPdfApp.Hosting;
 
-public sealed class PluginManifest
+public sealed class PluginRegistration
 {
+    public required PluginDescriptor Descriptor { get; init; }
     public required PluginManifest Manifest { get; init; }
     public required string Folder { get; init; }
     public required Assembly Assembly { get; init; }
@@ -50,9 +51,9 @@ public static class PluginLoader
         PropertyNameCaseInsensitive = true,
     };
 
-    public static List<PluginManifest> LoadManifests(string rootDir)
+    public static List<PluginDescriptor> LoadDescriptors(string rootDir)
     {
-        var result = new List<PluginManifest>();
+        var result = new List<PluginDescriptor>();
         if (!Directory.Exists(rootDir))
         {
             return result;
@@ -69,14 +70,14 @@ public static class PluginLoader
             try
             {
                 var json = File.ReadAllText(manifestPath);
-                var manifest = JsonSerializer.Deserialize<PluginManifest>(json, ManifestJsonOptions);
-                if (manifest is null)
+                var descriptor = JsonSerializer.Deserialize<PluginDescriptor>(json, ManifestJsonOptions);
+                if (descriptor is null)
                 {
                     continue;
                 }
 
-                manifest.Folder = dir;
-                result.Add(manifest);
+                descriptor.Folder = dir;
+                result.Add(descriptor);
             }
             catch
             {
@@ -87,29 +88,52 @@ public static class PluginLoader
         return result;
     }
 
-    public static List<PluginManifest> LoadAll(IServiceProvider services, string rootDir)
+    public static List<PluginManifest> LoadManifests(string rootDir)
     {
-        var descriptors = new List<PluginManifest>();
-        foreach (var manifest in LoadManifests(rootDir))
+        var descriptors = LoadDescriptors(rootDir);
+        var manifests = new List<PluginManifest>(descriptors.Count);
+
+        foreach (var descriptor in descriptors)
         {
-            if (string.IsNullOrWhiteSpace(manifest.Folder))
+            if (!descriptor.TryValidate(out _))
             {
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(manifest.Assembly) ||
-                string.IsNullOrWhiteSpace(manifest.EntryType))
+            manifests.Add(descriptor.ToContract());
+        }
+
+        return manifests;
+    }
+
+    public static List<PluginRegistration> LoadAll(IServiceProvider services, string rootDir)
+    {
+        var registrations = new List<PluginRegistration>();
+        foreach (var descriptor in LoadDescriptors(rootDir))
+        {
+            if (!descriptor.TryValidate(out _))
             {
                 continue;
             }
 
-            var assemblyPath = Path.Combine(manifest.Folder, manifest.Assembly);
+            if (string.IsNullOrWhiteSpace(descriptor.Folder))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(descriptor.Assembly) ||
+                string.IsNullOrWhiteSpace(descriptor.EntryType))
+            {
+                continue;
+            }
+
+            var assemblyPath = Path.Combine(descriptor.Folder, descriptor.Assembly);
             if (!File.Exists(assemblyPath))
             {
                 continue;
             }
 
-            var alc = new PluginLoadContext(manifest.Folder);
+            var alc = new PluginLoadContext(descriptor.Folder);
             Assembly asm;
             try
             {
@@ -120,7 +144,7 @@ public static class PluginLoader
                 continue;
             }
 
-            var entryType = asm.GetType(manifest.EntryType, throwOnError: false, ignoreCase: false);
+            var entryType = asm.GetType(descriptor.EntryType, throwOnError: false, ignoreCase: false);
             if (entryType is null)
             {
                 continue;
@@ -141,21 +165,29 @@ public static class PluginLoader
                 }
 
                 instance.Initialize(services);
+
+                if (instance is IBlazorPlugin blazorPlugin)
+                {
+                    instance = BlazorPluginProxy.WrapIfNeeded(blazorPlugin);
+                }
             }
             catch
             {
                 continue;
             }
 
-            descriptors.Add(new PluginManifest
+            var manifest = descriptor.ToContract();
+
+            registrations.Add(new PluginRegistration
             {
+                Descriptor = descriptor,
                 Manifest = manifest,
-                Folder = manifest.Folder,
+                Folder = descriptor.Folder!,
                 Assembly = asm,
                 Instance = instance,
             });
         }
 
-        return descriptors;
+        return registrations;
     }
 }
