@@ -17,7 +17,6 @@ public static class PluginMapping
             Id = descriptor.Id!,
             Name = descriptor.Name!,
             Version = descriptor.Version!,
-            Description = descriptor.Description,
             RouteBase = descriptor.RouteBase
         };
     }
