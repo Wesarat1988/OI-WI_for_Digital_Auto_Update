@@ -11,6 +11,9 @@ using Microsoft.Extensions.Logging;
 // ===== [ADD] Plugins: using =====
 using Contracts;
 using BlazorPdfApp.Hosting; // ปรับให้ตรงกับ namespace ของ PluginLoader/PluginManifest ของคุณ
+using BlazorPdfApp.WorkOrders;
+using Contracts.Common;
+using Contracts.WorkOrders;
 
 const long MaxUploadBytes = 50L * 1024 * 1024; // 50 MB upload limit per PDF
 
@@ -20,6 +23,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddHttpClient();
+builder.Services.AddWorkOrders(builder.Configuration);
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = MaxUploadBytes;
@@ -28,8 +32,8 @@ builder.Services.Configure<FormOptions>(options =>
 // ===== [ADD] Plugins: DI bucket สำหรับปลั๊กอินที่มี UI =====
 builder.Services.AddSingleton<List<IBlazorPlugin>>();
 builder.Services.AddSingleton<IReadOnlyList<IBlazorPlugin>>(sp => sp.GetRequiredService<List<IBlazorPlugin>>());
-builder.Services.AddSingleton<List<BlazorPdfApp.Hosting.PluginManifest>>();
-builder.Services.AddSingleton<IReadOnlyList<BlazorPdfApp.Hosting.PluginManifest>>(sp => sp.GetRequiredService<List<BlazorPdfApp.Hosting.PluginManifest>>());
+builder.Services.AddSingleton<List<BlazorPdfApp.Hosting.PluginRegistration>>();
+builder.Services.AddSingleton<IReadOnlyList<BlazorPdfApp.Hosting.PluginRegistration>>(sp => sp.GetRequiredService<List<BlazorPdfApp.Hosting.PluginRegistration>>());
 
 var app = builder.Build();
 
@@ -86,7 +90,7 @@ using (var scope = app.Services.CreateScope())
 
     var loaded = PluginLoader.LoadAll(services, pluginsDir);
 
-    var descriptorStore = services.GetRequiredService<List<BlazorPdfApp.Hosting.PluginManifest>>();
+    var descriptorStore = services.GetRequiredService<List<BlazorPdfApp.Hosting.PluginRegistration>>();
     descriptorStore.AddRange(loaded);
 
     var uiBucket = services.GetRequiredService<List<IBlazorPlugin>>();
@@ -122,7 +126,32 @@ using (var scope = app.Services.CreateScope())
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapGet("/_debug/plugins", (IReadOnlyList<IBlazorPlugin> ui, IReadOnlyList<BlazorPdfApp.Hosting.PluginManifest> descriptors) =>
+    app.MapGet("/_debug/workorders", async (
+        IWorkOrderReader reader,
+        int page = 1,
+        int pageSize = 20,
+        string? search = null,
+        string? status = null,
+        string? line = null,
+        string? partNo = null,
+        DateTime? fromUtc = null,
+        DateTime? toUtc = null,
+        CancellationToken cancellationToken = default) =>
+    {
+        var request = new PageRequest(page, pageSize, search, status, line, partNo, fromUtc, toUtc);
+        return await reader.SearchAsync(request, cancellationToken);
+    });
+
+    app.MapGet("/_debug/workorders/{id}", async (
+        IWorkOrderReader reader,
+        string id,
+        CancellationToken cancellationToken) =>
+    {
+        var workOrder = await reader.GetAsync(id, cancellationToken);
+        return workOrder is not null ? Results.Ok(workOrder) : Results.NotFound();
+    });
+
+    app.MapGet("/_debug/plugins", (IReadOnlyList<IBlazorPlugin> ui, IReadOnlyList<BlazorPdfApp.Hosting.PluginRegistration> descriptors) =>
         Results.Json(new
         {
             count = ui.Count,
